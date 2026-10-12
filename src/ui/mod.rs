@@ -23,6 +23,8 @@ pub(crate) const COMPRESSED: Color = Color::Rgb(232, 96, 109);
 pub(crate) const FREE: Color = Color::Rgb(128, 134, 142);
 pub(crate) const ECORE: Color = Color::Rgb(78, 196, 196);
 pub(crate) const PCORE: Color = Color::Rgb(150, 130, 232);
+pub(crate) const YELLOW: Color = Color::Rgb(250, 204, 21);
+pub(crate) const RED: Color = Color::Rgb(248, 113, 113);
 
 pub fn draw(frame: &mut Frame, snapshot: &Snapshot, view: View) {
     let area = frame.area();
@@ -120,16 +122,47 @@ pub(crate) fn stacked_bar(width: u16, parts: &[(u64, Color)]) -> Line<'static> {
     Line::from(spans)
 }
 
-pub(crate) fn legend(parts: &[(&str, u64, Color)]) -> Line<'static> {
-    let mut spans = Vec::new();
-    for (index, (label, bytes, color)) in parts.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw("  "));
+pub(crate) fn legend(parts: &[(&str, u64, Color)], width: u16) -> Vec<Line<'static>> {
+    let total: u64 = parts.iter().map(|(_, bytes, _)| *bytes).sum();
+    let mut lines = Vec::new();
+    let mut line = Line::default();
+    for (label, bytes, color) in parts {
+        let percent = if total > 0 {
+            (*bytes as f64 * 100.0 / total as f64).round() as u64
+        } else {
+            0
+        };
+        let entry = Line::from(vec![
+            Span::styled("■ ", Style::new().fg(*color)),
+            Span::styled(format!("{label} "), Style::new().bold()),
+            Span::raw(format!("{} ({}%)", format_bytes(*bytes), percent)),
+        ]);
+        if !line.spans.is_empty() && line.width() + 2 + entry.width() > width as usize {
+            lines.push(line);
+            line = Line::default();
         }
-        spans.push(Span::styled("■ ", Style::new().fg(*color)));
-        spans.push(Span::raw(format!("{label} {}", format_bytes(*bytes))));
+        if !line.spans.is_empty() {
+            line.spans.push(Span::raw("  "));
+        }
+        line.spans.extend(entry.spans);
     }
-    Line::from(spans)
+    if !line.spans.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+pub(crate) fn mini_bar(width: usize, ratio: f64, color: Color) -> Line<'static> {
+    if width == 0 {
+        return Line::from(String::new());
+    }
+    let ratio = ratio.clamp(0.0, 1.0);
+    let filled = (ratio * width as f64).round() as usize;
+    let unfilled = width.saturating_sub(filled);
+    Line::from(vec![
+        Span::styled("█".repeat(filled), Style::new().fg(color)),
+        Span::styled("░".repeat(unfilled), Style::new().dim()),
+    ])
 }
 
 pub(crate) enum ProcessMetric {
@@ -217,15 +250,18 @@ pub(crate) fn split_length(area: Rect, length: u16) -> (Rect, Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::example_snapshot;
+    use crate::model::{CoreCluster, CoreStats, example_snapshot};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     fn view_text(view: View, width: u16, height: u16) -> String {
+        snapshot_text(&example_snapshot(), view, width, height)
+    }
+
+    fn snapshot_text(snapshot: &Snapshot, view: View, width: u16, height: u16) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        let snapshot = example_snapshot();
-        terminal.draw(|frame| draw(frame, &snapshot, view)).unwrap();
+        terminal.draw(|frame| draw(frame, snapshot, view)).unwrap();
         let buffer = terminal.backend().buffer();
         let mut text = String::new();
         for y in 0..buffer.area.height {
@@ -268,6 +304,56 @@ mod tests {
         assert!(network.contains("UP"));
         assert!(network.contains('─'));
         assert!(network.contains('█'));
+    }
+
+    #[test]
+    fn narrow_cpu_cards_show_every_core() {
+        for count in [24, 32] {
+            let mut snapshot = example_snapshot();
+            snapshot.cpu.cores = vec![
+                CoreStats {
+                    cluster: CoreCluster::Unknown,
+                    usage_percent: 100.0,
+                };
+                count
+            ];
+            for width in [70, 80] {
+                for height in [36, 24, 20] {
+                    let text = snapshot_text(&snapshot, View::Cpu, width, height);
+                    for index in 1..=count {
+                        let label = format!("C{index:<2} ");
+                        let entry = text.lines().find_map(|line| line.split_once(&label));
+                        let (_, tail) = entry.unwrap_or_else(|| {
+                            panic!("missing core {index} at {width}x{height} with {count} cores:\n{text}")
+                        });
+                        assert!(
+                            tail.split('C').next().unwrap().contains("100%"),
+                            "clipped core {index} value at {width}x{height}:\n{text}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_ram_cards_show_all_category_values_and_percentages() {
+        for width in [70, 80, 100] {
+            let text = view_text(View::Ram, width, 24);
+            for value in [
+                "App 43.00 GB (34%)",
+                "Wired 7.00 GB (5%)",
+                "Compressed 44.00 GB (34%)",
+                "Free 34.00 GB (27%)",
+            ] {
+                assert!(
+                    text.contains(value),
+                    "missing {value} at width {width}:\n{text}"
+                );
+            }
+            assert!(text.contains("Swap 17.0 MB"));
+            assert!(text.contains("Docker"));
+        }
     }
 
     #[test]

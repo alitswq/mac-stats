@@ -20,7 +20,7 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
             frame.render_widget(Paragraph::new("Memory counters are unavailable."), inner);
             return;
         }
-        let lines = vec![
+        let mut lines = vec![
             Line::from(format!(
                 "{} used of {}   {}",
                 format_bytes(memory.used_bytes),
@@ -37,15 +37,21 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                     (memory.free_bytes, FREE),
                 ],
             ),
-            legend(&[
+        ];
+        lines.extend(legend(
+            &[
                 ("App", memory.app_bytes, APP),
                 ("Wired", memory.wired_bytes, WIRED),
                 ("Compressed", memory.compressed_bytes, COMPRESSED),
                 ("Free", memory.free_bytes, FREE),
-            ]),
-            Line::from(format!("Swap {}", format_bytes(memory.swap_used_bytes))),
-        ];
-        let (summary, rest) = split_length(inner, 4);
+            ],
+            inner.width,
+        ));
+        lines.push(Line::from(format!(
+            "Swap {}",
+            format_bytes(memory.swap_used_bytes)
+        )));
+        let (summary, rest) = split_length(inner, lines.len() as u16);
         render_lines(frame, summary, lines);
         let chart_height = if rest.height >= 16 {
             8
