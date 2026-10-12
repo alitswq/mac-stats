@@ -192,13 +192,21 @@ fn paint_series(
     if columns == 0 || rows == 0 || samples.is_empty() || max == 0 {
         return;
     }
-    let mut mask = vec![0u8; columns * rows];
     let pixels_x = columns * 2;
     let pixels_y = rows * 2;
-    for pixel_x in 0..pixels_x {
-        let value = sample_at(samples, pixel_x, pixels_x);
-        let filled =
-            ((value as u128) * (pixels_y as u128) / (max as u128)).min(pixels_y as u128) as usize;
+    // One pixel per sample, newest on the right. Do not stretch a short history
+    // across the plot; that turns a one-second spike into a screen-wide slope.
+    let visible = if samples.len() > pixels_x {
+        &samples[samples.len() - pixels_x..]
+    } else {
+        samples
+    };
+    let origin = pixels_x - visible.len();
+    let mut mask = vec![0u8; columns * rows];
+    for (index, value) in visible.iter().copied().enumerate() {
+        let pixel_x = origin + index;
+        let filled = ((u128::from(value) * pixels_y as u128) / u128::from(max))
+            .min(pixels_y as u128) as usize;
         for step in 0..filled {
             let pixel_y = match direction {
                 Direction::Up => pixels_y - 1 - step,
@@ -230,26 +238,6 @@ fn quadrant_bit(pixel_x: usize, pixel_y: usize) -> u8 {
     }
 }
 
-/// Linear sample across the plot. Pixel 0 is the oldest sample and the last pixel is the newest.
-fn sample_at(samples: &[u64], pixel: usize, pixels: usize) -> u64 {
-    let last = samples.len() - 1;
-    if last == 0 || pixels <= 1 {
-        return samples[last];
-    }
-    let span = (pixels - 1) as u128;
-    let numer = pixel as u128 * last as u128;
-    let index = (numer / span) as usize;
-    let toward = numer % span;
-    let left = u128::from(samples[index]);
-    let right = u128::from(samples[(index + 1).min(last)]);
-    let value = if right >= left {
-        left + (right - left) * toward / span
-    } else {
-        left - (left - right) * toward / span
-    };
-    value as u64
-}
-
 fn split_rows(height: u16) -> (u16, u16, u16) {
     if height <= 1 {
         (height, 0, 0)
@@ -267,25 +255,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn samples_are_interpolated_from_oldest_to_newest() {
-        assert_eq!(sample_at(&[40], 3, 8), 40);
-        assert_eq!(sample_at(&[0, 100], 0, 5), 0);
-        assert_eq!(sample_at(&[0, 100], 2, 5), 50);
-        assert_eq!(sample_at(&[0, 100], 4, 5), 100);
-    }
-
-    #[test]
-    fn a_ramp_rises_across_the_plot_instead_of_forming_two_blocks() {
-        let area = Rect::new(0, 0, 20, 10);
+    fn a_spike_stays_one_pixel_wide_on_the_right() {
+        let mut samples = vec![0; 30];
+        samples.push(100);
+        let area = Rect::new(0, 0, 40, 12);
         let mut buf = Buffer::empty(area);
-        Widget::render(AreaChart::percent(&[0, 100], Color::White), area, &mut buf);
+        Widget::render(AreaChart::percent(&samples, Color::White), area, &mut buf);
         let ink = |x| {
             (0..area.height)
                 .filter(|y| buf[(x, *y)].symbol() != " ")
                 .count()
         };
-        assert!(ink(5) < ink(12));
-        assert!(ink(12) < ink(19));
+        assert!(ink(39) > 1);
+        assert_eq!(ink(37), 0);
+        assert_eq!(ink(20), 0);
     }
 
     #[test]
@@ -293,7 +276,8 @@ mod tests {
         let area = Rect::new(0, 0, 20, 10);
         let mut buf = Buffer::empty(area);
         Widget::render(AreaChart::percent(&[0, 100], Color::White), area, &mut buf);
-        assert_eq!(buf[(19, 9)].symbol(), "█");
+        assert_eq!(buf[(19, 9)].symbol(), "▐");
+        assert_eq!(buf[(18, 9)].symbol(), " ");
         assert_eq!(buf[(0, 0)].symbol(), "1");
         assert_eq!(buf[(0, 9)].symbol(), "0");
     }
@@ -313,6 +297,7 @@ mod tests {
             .join("");
         assert!(text.contains("50"));
         assert_eq!(buf[(23, 5)].symbol(), "─");
-        assert_eq!(buf[(23, 6)].symbol(), "█");
+        assert_eq!(buf[(23, 6)].symbol(), "▐");
+        assert_eq!(buf[(22, 6)].symbol(), " ");
     }
 }

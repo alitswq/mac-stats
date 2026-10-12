@@ -1,7 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
-pub const HISTORY_LEN: usize = 60;
+/// One-second samples kept for the history graphs. Wide terminals draw one
+/// horizontal pixel per sample, so this is long enough to fill the window.
+pub const HISTORY_LEN: usize = 600;
 pub const TOP_PROCESS_COUNT: usize = 8;
 
 /// Views selected from the number keys. `5` is the combined screen.
