@@ -117,8 +117,14 @@ impl Widget for SplitChart {
         } else {
             "…".to_string()
         };
+        let (upper, baseline, lower) = split_rows(area.height);
+        // An even-height area leaves one spare row so both bands use equal scales.
+        let chart_area = Rect {
+            height: upper + baseline + lower,
+            ..area
+        };
         let plot = layout_plot(
-            area,
+            chart_area,
             buf,
             &label,
             &label,
@@ -126,7 +132,6 @@ impl Widget for SplitChart {
             Style::new().fg(self.lower_color),
             RATE_GUTTER,
         );
-        let (upper, baseline, lower) = split_rows(plot.height);
         let upper_area = Rect::new(plot.x, plot.y, plot.width, upper);
         let lower_area = Rect::new(plot.x, plot.y + upper + baseline, plot.width, lower);
         paint_bands(
@@ -151,6 +156,7 @@ impl Widget for SplitChart {
         );
         if baseline == 1 && plot.width > 0 {
             let y = plot.y + upper;
+            write_label(buf, area.x, y, plot.x - area.x, "0", Style::new().dim());
             for x in plot.x..plot.x + plot.width {
                 buf[(x, y)].set_symbol("─").set_style(Style::new().dim());
             }
@@ -414,6 +420,37 @@ mod tests {
         assert_eq!(buf[(23, 5)].symbol(), "─");
         assert_eq!(buf[(23, 6)].symbol(), "█");
         assert_eq!(buf[(22, 6)].symbol(), " ");
+    }
+
+    #[test]
+    fn split_scale_labels_match_the_band_endpoints_and_center_zero() {
+        for height in [10, 11, 20, 21] {
+            let area = Rect::new(0, 0, 30, height);
+            let buf = render(
+                SplitChart::throughput(&[100], &[100], 100, Color::Red, Color::Blue),
+                area,
+            );
+            let baseline = (0..height).find(|y| buf[(29, *y)].symbol() == "─").unwrap();
+            let labels: Vec<_> = (0..height)
+                .filter(|y| {
+                    let line: String = (0..11).map(|x| buf[(x, *y)].symbol()).collect();
+                    line.trim() == "100 B/s"
+                })
+                .collect();
+            assert_eq!(labels.len(), 2);
+            assert_eq!(
+                baseline - labels[0],
+                labels[1] - baseline,
+                "unequal scale endpoints at height {height}"
+            );
+            assert_eq!(
+                buf[(0, baseline)].symbol(),
+                "0",
+                "missing zero at height {height}"
+            );
+            assert_eq!(buf[(29, labels[0])].symbol(), "█");
+            assert_eq!(buf[(29, labels[1])].symbol(), "█");
+        }
     }
 
     #[test]
