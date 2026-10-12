@@ -7,9 +7,8 @@ use ratatui::widgets::{Bar, BarChart, Paragraph};
 use crate::format::{format_load, format_uptime, percent_text};
 use crate::model::{CoreCluster, Snapshot};
 
-use super::{
-    APP, ECORE, PCORE, ProcessMetric, card, process_table, render_lines, spark, split_length,
-};
+use super::chart::AreaChart;
+use super::{APP, ECORE, PCORE, ProcessMetric, card, process_table, render_lines, split_length};
 
 pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
     card(frame, area, "CPU", |frame, inner| {
@@ -45,18 +44,14 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
         let (summary, rest) = split_length(inner, text_height);
         render_lines(frame, summary, lines);
 
-        let show_chart = rest.height >= 12;
-        let (chart, rest) = if show_chart {
-            split_length(rest, 4)
-        } else {
-            (Rect::new(rest.x, rest.y, rest.width, 0), rest)
-        };
+        let (graph_height, core_height, _) =
+            section_heights(rest.height, !snapshot.cpu.cores.is_empty());
+        let (chart, rest) = split_length(rest, graph_height);
         if chart.height > 0 {
-            frame.render_widget(spark(&snapshot.cpu_history, Some(100), APP), chart);
+            frame.render_widget(AreaChart::percent(&snapshot.cpu_history, APP), chart);
         }
 
-        let core_height = if rest.height > 14 { 8 } else { rest.height / 3 };
-        let (cores, table) = if snapshot.cpu.cores.is_empty() || core_height < 3 {
+        let (cores, table) = if core_height == 0 {
             (Rect::new(rest.x, rest.y, rest.width, 0), rest)
         } else {
             split_length(rest, core_height)
@@ -71,6 +66,28 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
             );
         }
     });
+}
+
+/// Graph height, per-core strip, and process table. The graph keeps the leftover space.
+fn section_heights(height: u16, has_cores: bool) -> (u16, u16, u16) {
+    const TABLE: u16 = 9;
+    const CORES: u16 = 5;
+    const GRAPH_MIN: u16 = 8;
+    if height == 0 {
+        return (0, 0, 0);
+    }
+    let cores = if has_cores { CORES } else { 0 };
+    if height >= GRAPH_MIN + cores + TABLE {
+        return (height - cores - TABLE, cores, TABLE);
+    }
+    if height >= GRAPH_MIN + TABLE {
+        return (height - TABLE, 0, TABLE);
+    }
+    if has_cores && height >= GRAPH_MIN + 3 {
+        let cores = (height - GRAPH_MIN).min(CORES);
+        return (height - cores, cores, 0);
+    }
+    (height, 0, 0)
 }
 
 fn core_chart(cores: &[crate::model::CoreStats], width: u16) -> BarChart<'static> {
@@ -99,4 +116,18 @@ fn core_chart(cores: &[crate::model::CoreStats], width: u16) -> BarChart<'static
         .bar_width(bar_width)
         .bar_gap(bar_gap)
         .max(100)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::section_heights;
+
+    #[test]
+    fn the_history_graph_keeps_the_space_above_the_core_and_process_strips() {
+        assert_eq!(section_heights(32, true), (18, 5, 9));
+        assert_eq!(section_heights(17, true), (8, 0, 9));
+        assert_eq!(section_heights(16, true), (11, 5, 0));
+        assert_eq!(section_heights(10, true), (10, 0, 0));
+        assert_eq!(section_heights(24, false), (15, 0, 9));
+    }
 }

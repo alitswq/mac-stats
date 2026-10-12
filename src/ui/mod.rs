@@ -1,3 +1,4 @@
+mod chart;
 mod cpu;
 mod disk;
 mod essentials;
@@ -271,6 +272,8 @@ mod tests {
         assert!(cpu.contains("e-cores"));
         assert!(cpu.contains("Docker"));
         assert!(cpu.contains("3 hours, 2 minutes"));
+        assert!(cpu.contains("100%"));
+        assert!(cpu.contains('█'));
 
         let disk = view_text(View::Disk, 80, 24);
         assert!(disk.contains("Macintosh HD"));
@@ -280,6 +283,8 @@ mod tests {
         assert!(network.contains("192.168.68.76"));
         assert!(network.contains("4c:c5:d9:d5:11:d3"));
         assert!(network.contains("UP"));
+        assert!(network.contains('─'));
+        assert!(network.contains('█'));
     }
 
     #[test]
