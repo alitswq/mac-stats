@@ -3,8 +3,8 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::format::{format_bytes, format_load, format_percent, percent_text, rate_text};
-use crate::model::Snapshot;
+use crate::format::{fit, format_bytes, format_load, format_percent, percent_text, rate_text};
+use crate::model::{Snapshot, VolumeStats};
 
 use super::chart::{AreaChart, SplitChart};
 use super::{
@@ -158,59 +158,93 @@ fn draw_ram(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
 
 fn draw_disk(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
     card(frame, area, "DISK", |frame, inner| {
-        let Some(volume) = snapshot.volumes.first() else {
+        if snapshot.volumes.is_empty() {
             render_lines(frame, inner, vec![Line::from("no user volumes")]);
             return;
-        };
-        let lines = vec![
-            Line::from(vec![
-                Span::styled(volume.name.clone(), Style::new().bold()),
-                Span::raw(" "),
-                Span::styled(format!("({})", volume.mount_point), Style::new().dim()),
-            ]),
-            Line::from(vec![Span::styled(
-                format!(
-                    "{} free of {}",
-                    format_bytes(volume.available_bytes),
-                    format_bytes(volume.total_bytes)
-                ),
-                Style::new().bold(),
-            )]),
-            Line::from(vec![
-                Span::styled("▼ ", Style::new().fg(APP)),
-                Span::styled(
-                    format!(
-                        "read {}",
-                        rate_text(volume.read_bytes_per_sec, snapshot.rates_ready)
-                    ),
-                    Style::new().fg(APP).bold(),
-                ),
-                Span::raw("   "),
-                Span::styled("▲ ", Style::new().fg(COMPRESSED)),
-                Span::styled(
-                    format!(
-                        "write {}",
-                        rate_text(volume.write_bytes_per_sec, snapshot.rates_ready)
-                    ),
-                    Style::new().fg(COMPRESSED).bold(),
-                ),
-            ]),
-        ];
-        let (text, chart) = super::split_length(inner, 3);
-        render_lines(frame, text, lines);
-        if chart.height > 0 {
-            frame.render_widget(
-                AreaChart::overlay(
-                    &[
-                        (&volume.read_history, APP),
-                        (&volume.write_history, COMPRESSED),
-                    ],
-                    volume.rate_scale,
-                ),
-                chart,
+        }
+        // Give each volume at least one row; reserve a row for any hidden volumes.
+        let overflow = snapshot.volumes.len() > inner.height as usize;
+        let (volume_area, overflow_area) =
+            super::split_length(inner, inner.height.saturating_sub(u16::from(overflow)));
+        let visible = snapshot.volumes.len().min(volume_area.height as usize);
+        if visible > 0 {
+            let areas = Layout::vertical(vec![Constraint::Fill(1); visible]).split(volume_area);
+            for (volume, area) in snapshot.volumes.iter().zip(areas.iter()).take(visible) {
+                draw_disk_volume(frame, *area, volume, snapshot.rates_ready);
+            }
+        }
+        if overflow {
+            render_lines(
+                frame,
+                overflow_area,
+                vec![Line::from(format!(
+                    "+{} more volumes (3 Disk)",
+                    snapshot.volumes.len() - visible,
+                ))],
             );
         }
     });
+}
+
+fn draw_disk_volume(frame: &mut Frame, area: Rect, volume: &VolumeStats, rates_ready: bool) {
+    if area.height == 1 {
+        let capacity = format!("  {} free", format_bytes(volume.available_bytes));
+        let name_width = (area.width as usize).saturating_sub(capacity.len());
+        render_lines(
+            frame,
+            area,
+            vec![Line::from(vec![
+                Span::styled(fit(&volume.name, name_width), Style::new().bold()),
+                Span::raw(capacity),
+            ])],
+        );
+        return;
+    }
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(volume.name.clone(), Style::new().bold()),
+            Span::raw(" "),
+            Span::styled(format!("({})", volume.mount_point), Style::new().dim()),
+        ]),
+        Line::from(vec![Span::styled(
+            format!(
+                "{} free of {}",
+                format_bytes(volume.available_bytes),
+                format_bytes(volume.total_bytes)
+            ),
+            Style::new().bold(),
+        )]),
+        Line::from(vec![
+            Span::styled("▼ ", Style::new().fg(APP)),
+            Span::styled(
+                format!("read {}", rate_text(volume.read_bytes_per_sec, rates_ready)),
+                Style::new().fg(APP).bold(),
+            ),
+            Span::raw("   "),
+            Span::styled("▲ ", Style::new().fg(COMPRESSED)),
+            Span::styled(
+                format!(
+                    "write {}",
+                    rate_text(volume.write_bytes_per_sec, rates_ready)
+                ),
+                Style::new().fg(COMPRESSED).bold(),
+            ),
+        ]),
+    ];
+    let (text, chart) = super::split_length(area, 3);
+    render_lines(frame, text, lines);
+    if chart.height >= 2 {
+        frame.render_widget(
+            AreaChart::overlay(
+                &[
+                    (&volume.read_history, APP),
+                    (&volume.write_history, COMPRESSED),
+                ],
+                volume.rate_scale,
+            ),
+            chart,
+        );
+    }
 }
 
 fn draw_net(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {

@@ -453,6 +453,54 @@ mod tests {
     }
 
     #[test]
+    fn essentials_lists_external_volumes_when_space_is_available() {
+        let mut snapshot = example_snapshot();
+        let mut external = snapshot.volumes[0].clone();
+        external.name = "External Backup".to_string();
+        external.mount_point = "/Volumes/Backup".to_string();
+        external.total_bytes = 2048;
+        external.available_bytes = 1000;
+        external.read_bytes_per_sec = Some(2048);
+        external.write_bytes_per_sec = Some(1024);
+        external.read_history = vec![2048];
+        external.write_history = vec![1024];
+        external.rate_scale = 3072;
+        snapshot.volumes.push(external);
+        for (width, height) in [(100, 36), (160, 60), (70, 36)] {
+            let text = snapshot_text(&snapshot, View::Essentials, width, height);
+            assert!(text.contains("Macintosh HD"), "{text}");
+            assert!(text.contains("External Backup"), "{text}");
+            assert!(text.contains("1000 B free of 2.0 KB"), "{text}");
+            assert!(text.contains("read 2.0 KB/s"), "{text}");
+            assert!(text.contains("write 1.0 KB/s"), "{text}");
+            if width >= 100 {
+                assert!(
+                    text.contains("3.0 KB/s"),
+                    "missing external history: {text}"
+                );
+            }
+        }
+        let compact = snapshot_text(&snapshot, View::Essentials, 70, 20);
+        assert!(compact.contains("Macintosh HD"), "{compact}");
+        assert!(
+            compact.contains("External Backup  1000 B free"),
+            "{compact}"
+        );
+    }
+
+    #[test]
+    fn essentials_reports_volumes_that_do_not_fit() {
+        let mut snapshot = example_snapshot();
+        snapshot.volumes = vec![snapshot.volumes[0].clone(); 5];
+        let text = snapshot_text(&snapshot, View::Essentials, 70, 20);
+        assert!(text.contains("Macintosh HD"), "{text}");
+        assert!(text.contains("+4 more volumes (3 Disk)"), "{text}");
+        snapshot.volumes.clear();
+        let text = snapshot_text(&snapshot, View::Essentials, 70, 20);
+        assert!(text.contains("no user volumes"), "{text}");
+    }
+
+    #[test]
     fn mini_bar_renders_fill_and_empty_fractions() {
         let empty = mini_bar(8, 0.0, APP);
         let empty_str: String = empty.spans.iter().map(|s| s.content.as_ref()).collect();

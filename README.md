@@ -70,7 +70,7 @@ Rates show `…` until the second sample, then `—` when a counter is missing.
 
 **Network.** The interface is the one used for the default route, found by matching a local UDP connect against the interface addresses. The card shows whether it is up, the local IPv4 address, the MAC address, and the current down and up rates. Download is blue and grows down from the center line. Upload is red and grows up from it. Both use one scale, so the same rate is the same height on either side. "Since launch" is the sum of samples taken while this process has been running, and it resets if the chosen interface changes. It is not the total since boot.
 
-**Essentials.** The same four headlines in one screen: CPU percent and history, the memory split, the first user volume, and the default interface. There is no process table on this view.
+**Essentials.** The same four headlines in one screen: CPU percent and history, the memory split, mounted user volumes, and the default interface. The Disk card lists each volume with free space and read/write rates, adding per-volume history when space allows. Smaller cards use compact summaries and show how many additional volumes are available in the Disk view. There is no process table on this view.
 
 ## Graphs
 
