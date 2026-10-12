@@ -187,8 +187,17 @@ fn draw_disk(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
 }
 
 fn draw_disk_volume(frame: &mut Frame, area: Rect, volume: &VolumeStats, rates_ready: bool) {
+    let free_percent = if volume.total_bytes == 0 {
+        0.0
+    } else {
+        (volume.available_bytes as f64 / volume.total_bytes as f64).clamp(0.0, 1.0) * 100.0
+    };
+    let free_percent = format_percent(free_percent);
     if area.height == 1 {
-        let capacity = format!("  {} free", format_bytes(volume.available_bytes));
+        let capacity = format!(
+            "  {} free ({free_percent} free)",
+            format_bytes(volume.available_bytes)
+        );
         let name_width = (area.width as usize).saturating_sub(capacity.len());
         render_lines(
             frame,
@@ -208,7 +217,7 @@ fn draw_disk_volume(frame: &mut Frame, area: Rect, volume: &VolumeStats, rates_r
         ]),
         Line::from(vec![Span::styled(
             format!(
-                "{} free of {}",
+                "{} free of {} ({free_percent} free)",
                 format_bytes(volume.available_bytes),
                 format_bytes(volume.total_bytes)
             ),

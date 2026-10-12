@@ -489,6 +489,33 @@ mod tests {
     }
 
     #[test]
+    fn essentials_shows_free_percentages_for_each_disk_and_updates_them() {
+        let mut snapshot = example_snapshot();
+        snapshot.volumes[0].total_bytes = 1000;
+        snapshot.volumes[0].available_bytes = 120;
+        let mut external = snapshot.volumes[0].clone();
+        external.name = "External Backup".to_string();
+        external.available_bytes = 860;
+        snapshot.volumes.push(external);
+        for (width, height) in [(100, 36), (160, 60), (70, 36), (70, 20)] {
+            let text = snapshot_text(&snapshot, View::Essentials, width, height);
+            assert!(text.contains("120 B free"), "{text}");
+            assert!(text.contains("(12% free)"), "{text}");
+            assert!(text.contains("860 B free"), "{text}");
+            assert!(text.contains("(86% free)"), "{text}");
+        }
+        snapshot.volumes[0].available_bytes = 250;
+        snapshot.volumes[1].available_bytes = 0;
+        let text = snapshot_text(&snapshot, View::Essentials, 100, 36);
+        assert!(text.contains("250 B free of 1000 B (25% free)"), "{text}");
+        assert!(text.contains("0 B free of 1000 B (0% free)"), "{text}");
+        snapshot.volumes[0].total_bytes = 0;
+        snapshot.volumes[0].available_bytes = 0;
+        let text = snapshot_text(&snapshot, View::Essentials, 100, 36);
+        assert!(text.contains("0 B free of 0 B (0% free)"), "{text}");
+    }
+
+    #[test]
     fn essentials_reports_volumes_that_do_not_fit() {
         let mut snapshot = example_snapshot();
         snapshot.volumes = vec![snapshot.volumes[0].clone(); 5];
