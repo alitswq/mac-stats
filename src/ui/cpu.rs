@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Style, Stylize};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -9,8 +9,8 @@ use crate::model::{CoreCluster, CoreStats, Snapshot};
 
 use super::chart::AreaChart;
 use super::{
-    APP, ECORE, PCORE, ProcessMetric, RED, YELLOW, card, mini_bar, process_table, render_lines,
-    split_length,
+    APP, ECORE, FREE, PCORE, ProcessMetric, RED, WIRED, YELLOW, card, mini_bar, process_table,
+    render_lines, split_length,
 };
 
 pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
@@ -19,30 +19,59 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
             frame.render_widget(Paragraph::new("CPU counters are unavailable."), inner);
             return;
         }
-        let mut lines = vec![
-            Line::from(format!(
-                "{}   user {}   system {}   idle {}",
+        let mut lines = vec![Line::from(vec![
+            Span::styled(
                 percent_text(snapshot.cpu.usage_percent),
+                Style::new().bold(),
+            ),
+            Span::raw("   "),
+            Span::styled("user ", Style::new().dim()),
+            Span::styled(
                 percent_text(snapshot.cpu.user_percent),
+                Style::new().fg(APP).bold(),
+            ),
+            Span::raw("   "),
+            Span::styled("system ", Style::new().dim()),
+            Span::styled(
                 percent_text(snapshot.cpu.system_percent),
+                Style::new().fg(WIRED).bold(),
+            ),
+            Span::raw("   "),
+            Span::styled("idle ", Style::new().dim()),
+            Span::styled(
                 percent_text(snapshot.cpu.idle_percent),
-            ))
-            .bold(),
-        ];
+                Style::new().fg(FREE),
+            ),
+        ])];
         if snapshot.cpu.efficiency_percent.is_some() || snapshot.cpu.performance_percent.is_some() {
-            lines.push(Line::from(format!(
-                "e-cores {}   p-cores {}",
-                percent_text(snapshot.cpu.efficiency_percent),
-                percent_text(snapshot.cpu.performance_percent),
-            )));
+            lines.push(Line::from(vec![
+                Span::styled("e-cores ", Style::new().dim()),
+                Span::styled(
+                    percent_text(snapshot.cpu.efficiency_percent),
+                    Style::new().fg(ECORE).bold(),
+                ),
+                Span::raw("   "),
+                Span::styled("p-cores ", Style::new().dim()),
+                Span::styled(
+                    percent_text(snapshot.cpu.performance_percent),
+                    Style::new().fg(PCORE).bold(),
+                ),
+            ]));
         }
-        lines.push(Line::from(format!(
-            "load {}  {}  {}    up {}",
-            format_load(snapshot.cpu.load_one),
-            format_load(snapshot.cpu.load_five),
-            format_load(snapshot.cpu.load_fifteen),
-            format_uptime(snapshot.cpu.uptime_seconds),
-        )));
+        lines.push(Line::from(vec![
+            Span::styled("load ", Style::new().dim()),
+            Span::styled(format_load(snapshot.cpu.load_one), Style::new().bold()),
+            Span::raw("  "),
+            Span::styled(format_load(snapshot.cpu.load_five), Style::new().bold()),
+            Span::raw("  "),
+            Span::styled(format_load(snapshot.cpu.load_fifteen), Style::new().bold()),
+            Span::raw("    "),
+            Span::styled("up ", Style::new().dim()),
+            Span::styled(
+                format_uptime(snapshot.cpu.uptime_seconds),
+                Style::new().bold(),
+            ),
+        ]));
         let text_height = lines.len() as u16;
         let (summary, rest) = split_length(inner, text_height);
         render_lines(frame, summary, lines);

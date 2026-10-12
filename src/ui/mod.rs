@@ -9,9 +9,9 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table};
 
-use crate::format::{fit, format_bytes, format_cpu_process, format_rate};
+use crate::format::{fit, format_bytes, format_cpu_process, format_rate, format_uptime};
 use crate::model::{ProcessRow, Snapshot, View, bar_widths};
 
 const MINIMUM_WIDTH: u16 = 70;
@@ -23,8 +23,10 @@ pub(crate) const COMPRESSED: Color = Color::Rgb(232, 96, 109);
 pub(crate) const FREE: Color = Color::Rgb(128, 134, 142);
 pub(crate) const ECORE: Color = Color::Rgb(78, 196, 196);
 pub(crate) const PCORE: Color = Color::Rgb(150, 130, 232);
+pub(crate) const GREEN: Color = Color::Rgb(74, 222, 128);
 pub(crate) const YELLOW: Color = Color::Rgb(250, 204, 21);
 pub(crate) const RED: Color = Color::Rgb(248, 113, 113);
+pub(crate) const MUTED: Color = Color::Rgb(100, 106, 115);
 
 pub fn draw(frame: &mut Frame, snapshot: &Snapshot, view: View) {
     let area = frame.area();
@@ -44,7 +46,7 @@ pub fn draw(frame: &mut Frame, snapshot: &Snapshot, view: View) {
         Constraint::Length(1),
     ])
     .areas(area);
-    draw_header(frame, header, view);
+    draw_header(frame, header, snapshot, view);
     draw_footer(frame, footer);
     match view {
         View::Essentials => essentials::draw(frame, body, snapshot),
@@ -55,19 +57,52 @@ pub fn draw(frame: &mut Frame, snapshot: &Snapshot, view: View) {
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, view: View) {
+fn draw_header(frame: &mut Frame, area: Rect, snapshot: &Snapshot, view: View) {
     let [title_row, tab_row] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
-    frame.render_widget(Paragraph::new(" mac-stats").bold(), title_row);
+
+    let [title_left, title_right] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(30)]).areas(title_row);
+
+    let left_spans = vec![
+        Span::styled(" mac-stats", Style::new().bold().fg(APP)),
+        Span::raw(" "),
+        Span::styled("[macOS]", Style::new().dim()),
+    ];
+    frame.render_widget(Paragraph::new(Line::from(left_spans)), title_left);
+
+    let right_spans = vec![
+        Span::styled("up ", Style::new().dim()),
+        Span::styled(
+            format_uptime(snapshot.cpu.uptime_seconds),
+            Style::new().bold(),
+        ),
+        Span::raw(" "),
+    ];
+    frame.render_widget(
+        Paragraph::new(Line::from(right_spans)).right_aligned(),
+        title_right,
+    );
+
     let tabs = View::cycle().iter().flat_map(|candidate| {
         let active = *candidate == view;
-        let style = if active {
-            Style::new().fg(Color::Black).bg(Color::White).bold()
+        let (style, key_style) = if active {
+            (
+                Style::new().fg(Color::Black).bg(Color::White).bold(),
+                Style::new().fg(Color::Black).bg(Color::White).bold(),
+            )
         } else {
-            Style::new().add_modifier(Modifier::DIM)
+            (
+                Style::new().add_modifier(Modifier::DIM),
+                Style::new().fg(APP).bold(),
+            )
         };
+        let label = candidate.label();
+        let key_char = label.chars().next().unwrap_or(' ');
+        let rest = &label[1..];
         [
-            Span::styled(format!(" {} ", candidate.label()), style),
+            Span::styled(format!(" {key_char}"), key_style),
+            Span::styled(format!("{rest} "), style),
             Span::raw(" "),
         ]
     });
@@ -78,10 +113,21 @@ fn draw_header(frame: &mut Frame, area: Rect, view: View) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect) {
-    frame.render_widget(
-        Paragraph::new(" 5 1-4 views    tab or arrows switch    q quit").dim(),
-        area,
-    );
+    let spans = vec![
+        Span::styled(" 5", Style::new().fg(APP).bold()),
+        Span::raw(" "),
+        Span::styled("1-4", Style::new().fg(APP).bold()),
+        Span::styled(" views  │  ", Style::new().dim()),
+        Span::styled("Tab", Style::new().fg(APP).bold()),
+        Span::styled(" or ", Style::new().dim()),
+        Span::styled("←→", Style::new().fg(APP).bold()),
+        Span::styled(" switch  │  ", Style::new().dim()),
+        Span::styled("q", Style::new().fg(APP).bold()),
+        Span::styled(" or ", Style::new().dim()),
+        Span::styled("Esc", Style::new().fg(APP).bold()),
+        Span::styled(" quit", Style::new().dim()),
+    ];
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 pub(crate) fn card<F>(frame: &mut Frame, area: Rect, title: &str, draw_inner: F)
@@ -89,6 +135,7 @@ where
     F: FnOnce(&mut Frame, Rect),
 {
     let block = Block::bordered()
+        .border_type(BorderType::Plain)
         .border_style(Style::new().dim())
         .title(Line::from(vec![
             Span::raw(" "),
@@ -177,22 +224,44 @@ pub(crate) fn process_table(
     rates_ready: bool,
 ) -> Table<'static> {
     let (header, widths, rows) = match metric {
-        ProcessMetric::Memory => (
-            vec!["Process", "Memory"],
-            vec![Constraint::Fill(1), Constraint::Length(12)],
-            processes
+        ProcessMetric::Memory => {
+            let max_mem = processes
                 .iter()
-                .map(|process| {
-                    Row::new(vec![
-                        Cell::from(fit(&process.name, 40)),
-                        Cell::from(format_bytes(process.memory_bytes)),
-                    ])
-                })
-                .collect::<Vec<_>>(),
-        ),
+                .map(|p| p.memory_bytes)
+                .max()
+                .unwrap_or(1)
+                .max(1);
+            (
+                vec!["PID", "Process", "Activity", "Memory"],
+                vec![
+                    Constraint::Length(7),
+                    Constraint::Fill(1),
+                    Constraint::Length(10),
+                    Constraint::Length(12),
+                ],
+                processes
+                    .iter()
+                    .map(|process| {
+                        let ratio = process.memory_bytes as f64 / max_mem as f64;
+                        let bar = mini_bar(8, ratio, APP);
+                        Row::new(vec![
+                            Cell::from(format!("{}", process.pid)).dim(),
+                            Cell::from(fit(&process.name, 35)),
+                            Cell::from(bar),
+                            Cell::from(format_bytes(process.memory_bytes)).bold(),
+                        ])
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
         ProcessMetric::Cpu => (
-            vec!["Process", "CPU"],
-            vec![Constraint::Fill(1), Constraint::Length(10)],
+            vec!["PID", "Process", "Activity", "CPU"],
+            vec![
+                Constraint::Length(7),
+                Constraint::Fill(1),
+                Constraint::Length(10),
+                Constraint::Length(10),
+            ],
             processes
                 .iter()
                 .map(|process| {
@@ -201,30 +270,57 @@ pub(crate) fn process_table(
                     } else {
                         "…".to_string()
                     };
-                    Row::new(vec![Cell::from(fit(&process.name, 40)), Cell::from(value)])
+                    let cpu_ratio = (process.cpu_percent as f64 / 100.0).clamp(0.0, 1.0);
+                    let color = if process.cpu_percent >= 100.0 {
+                        RED
+                    } else if process.cpu_percent >= 50.0 {
+                        YELLOW
+                    } else {
+                        APP
+                    };
+                    let bar = if rates_ready {
+                        mini_bar(8, cpu_ratio, color)
+                    } else {
+                        mini_bar(8, 0.0, MUTED)
+                    };
+                    let val_cell = if process.cpu_percent >= 100.0 {
+                        Cell::from(value).fg(RED).bold()
+                    } else if process.cpu_percent >= 50.0 {
+                        Cell::from(value).fg(YELLOW).bold()
+                    } else {
+                        Cell::from(value).bold()
+                    };
+                    Row::new(vec![
+                        Cell::from(format!("{}", process.pid)).dim(),
+                        Cell::from(fit(&process.name, 35)),
+                        Cell::from(bar),
+                        val_cell,
+                    ])
                 })
                 .collect::<Vec<_>>(),
         ),
         ProcessMetric::Disk => (
-            vec!["Process", "Read", "Write"],
+            vec!["PID", "Process", "Read", "Write"],
             vec![
+                Constraint::Length(7),
                 Constraint::Fill(1),
-                Constraint::Length(12),
-                Constraint::Length(12),
+                Constraint::Length(14),
+                Constraint::Length(14),
             ],
             processes
                 .iter()
                 .map(|process| {
                     let (read, write) = if rates_ready {
                         (
-                            format_rate(process.disk_read_bytes_per_sec),
-                            format_rate(process.disk_write_bytes_per_sec),
+                            format!("▼ {}", format_rate(process.disk_read_bytes_per_sec)),
+                            format!("▲ {}", format_rate(process.disk_write_bytes_per_sec)),
                         )
                     } else {
                         ("…".to_string(), "…".to_string())
                     };
                     Row::new(vec![
-                        Cell::from(fit(&process.name, 40)),
+                        Cell::from(format!("{}", process.pid)).dim(),
+                        Cell::from(fit(&process.name, 35)),
                         Cell::from(read).fg(APP),
                         Cell::from(write).fg(COMPRESSED),
                     ])
@@ -354,6 +450,21 @@ mod tests {
             assert!(text.contains("Swap 17.0 MB"));
             assert!(text.contains("Docker"));
         }
+    }
+
+    #[test]
+    fn mini_bar_renders_fill_and_empty_fractions() {
+        let empty = mini_bar(8, 0.0, APP);
+        let empty_str: String = empty.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(empty_str, "░░░░░░░░");
+
+        let half = mini_bar(8, 0.5, APP);
+        let half_str: String = half.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(half_str, "████░░░░");
+
+        let full = mini_bar(8, 1.0, APP);
+        let full_str: String = full.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(full_str, "████████");
     }
 
     #[test]

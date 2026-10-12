@@ -8,7 +8,7 @@ use crate::format::{format_bytes, rate_text};
 use crate::model::Snapshot;
 
 use super::chart::SplitChart;
-use super::{APP, COMPRESSED, card, render_lines, split_length};
+use super::{APP, COMPRESSED, GREEN, RED, card, render_lines, split_length};
 
 pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
     card(frame, area, "NETWORK", |frame, inner| {
@@ -17,7 +17,11 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
             frame.render_widget(Paragraph::new("No active interface."), inner);
             return;
         }
-        let status = if network.is_up { "UP" } else { "DOWN" };
+        let (status_text, status_style) = if network.is_up {
+            ("● UP", Style::new().fg(GREEN).bold())
+        } else {
+            ("○ DOWN", Style::new().fg(RED).bold())
+        };
         let ip = network
             .local_ip
             .clone()
@@ -25,6 +29,7 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
         let mac = network.mac.clone().unwrap_or_else(|| "—".to_string());
         let lines = vec![
             Line::from(vec![
+                Span::styled("▼ ", Style::new().fg(APP)),
                 Span::styled(
                     format!(
                         "down {}",
@@ -33,6 +38,7 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                     Style::new().fg(APP).bold(),
                 ),
                 Span::raw("    "),
+                Span::styled("▲ ", Style::new().fg(COMPRESSED)),
                 Span::styled(
                     format!(
                         "up {}",
@@ -41,15 +47,27 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                     Style::new().fg(COMPRESSED).bold(),
                 ),
             ]),
-            Line::from(format!(
-                "{}   {}   {}   {}",
-                network.interface_name, status, ip, mac
-            )),
-            Line::from(format!(
-                "since launch   down {}   up {}",
-                format_bytes(network.down_total_bytes),
-                format_bytes(network.up_total_bytes),
-            )),
+            Line::from(vec![
+                Span::styled(network.interface_name.clone(), Style::new().bold()),
+                Span::raw("   "),
+                Span::styled(status_text, status_style),
+                Span::raw("   "),
+                Span::styled(ip, Style::new().bold()),
+                Span::raw("   "),
+                Span::styled(mac, Style::new().dim()),
+            ]),
+            Line::from(vec![
+                Span::styled("since launch   ", Style::new().dim()),
+                Span::styled(
+                    format!("down {}", format_bytes(network.down_total_bytes)),
+                    Style::new().fg(APP).bold(),
+                ),
+                Span::raw("   "),
+                Span::styled(
+                    format!("up {}", format_bytes(network.up_total_bytes)),
+                    Style::new().fg(COMPRESSED).bold(),
+                ),
+            ]),
         ];
         let header = lines.len() as u16;
         let header = if inner.height > header + 6 {

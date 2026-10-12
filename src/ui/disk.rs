@@ -1,14 +1,16 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Stylize;
-use ratatui::text::Line;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Gauge, Paragraph};
 
 use crate::format::{format_bytes, rate_text};
 use crate::model::Snapshot;
 
 use super::chart::AreaChart;
-use super::{APP, COMPRESSED, ProcessMetric, card, process_table, render_lines, split_length};
+use super::{
+    APP, COMPRESSED, ProcessMetric, RED, YELLOW, card, process_table, render_lines, split_length,
+};
 
 pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
     let (volumes_area, table_area) = split_length_bottom(area, 11);
@@ -30,18 +32,44 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                 } else {
                     used as f64 / volume.total_bytes as f64
                 };
+                let gauge_color = if ratio >= 0.90 {
+                    RED
+                } else if ratio >= 0.80 {
+                    YELLOW
+                } else {
+                    APP
+                };
                 let lines = vec![
-                    Line::from(volume.name.clone()).bold(),
-                    Line::from(format!(
-                        "{} free of {}",
-                        format_bytes(volume.available_bytes),
-                        format_bytes(volume.total_bytes),
-                    )),
-                    Line::from(format!(
-                        "read {}   write {}",
-                        rate_text(volume.read_bytes_per_sec, snapshot.rates_ready),
-                        rate_text(volume.write_bytes_per_sec, snapshot.rates_ready),
-                    )),
+                    Line::from(vec![
+                        Span::styled(volume.name.clone(), Style::new().bold()),
+                        Span::raw(" "),
+                        Span::styled(format!("({})", volume.mount_point), Style::new().dim()),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(
+                            format!(
+                                "{} free of {}",
+                                format_bytes(volume.available_bytes),
+                                format_bytes(volume.total_bytes)
+                            ),
+                            Style::new().bold(),
+                        ),
+                        Span::raw(" "),
+                        Span::styled(format!("({:.0}% used)", ratio * 100.0), Style::new().dim()),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("read ", Style::new().dim()),
+                        Span::styled(
+                            rate_text(volume.read_bytes_per_sec, snapshot.rates_ready),
+                            Style::new().fg(APP).bold(),
+                        ),
+                        Span::raw("   "),
+                        Span::styled("write ", Style::new().dim()),
+                        Span::styled(
+                            rate_text(volume.write_bytes_per_sec, snapshot.rates_ready),
+                            Style::new().fg(COMPRESSED).bold(),
+                        ),
+                    ]),
                 ];
                 let (text, rest) = split_length(inner, 3);
                 render_lines(frame, text, lines);
@@ -52,7 +80,7 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                 frame.render_widget(
                     Gauge::default()
                         .ratio(ratio.clamp(0.0, 1.0))
-                        .gauge_style(APP)
+                        .gauge_style(gauge_color)
                         .use_unicode(true),
                     gauge_area,
                 );

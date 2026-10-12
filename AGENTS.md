@@ -53,7 +53,3 @@ cargo run -- --once
 ```
 
 The --once command takes two readings one second apart and exits. cargo run opens the interactive monitor and requires the long-running-process confirmation described above.
-
-## Ruflo Integration
-
-When working on multi-file tasks or complex features, use ToolSearch to find and invoke available Ruflo MCP tools. Key tools are memory_store, memory_search, hooks_route, swarm_init, and agent_spawn. Check system-reminder tags for [INTELLIGENCE] pattern suggestions before starting work. If these capabilities are unavailable, state that limitation and continue with available tools; do not claim a Ruflo tool ran.
