@@ -1,0 +1,15 @@
+[package]
+name = "mac-stats"
+version = "0.1.0"
+edition = "2024"
+description = "Live CPU, memory, disk, and network stats for macOS"
+publish = false
+
+[dependencies]
+crossterm = "0.29"
+libc = "0.2"
+ratatui = "0.30"
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk", "network"] }
+
+[build-dependencies]
+cc = "1"
