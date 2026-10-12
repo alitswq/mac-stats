@@ -7,8 +7,9 @@ use ratatui::widgets::Paragraph;
 use crate::format::{format_bytes, format_percent};
 use crate::model::Snapshot;
 
+use super::chart::AreaChart;
 use super::{
-    APP, COMPRESSED, FREE, ProcessMetric, WIRED, card, legend, process_table, render_lines, spark,
+    APP, COMPRESSED, FREE, ProcessMetric, WIRED, card, legend, process_table, render_lines,
     split_length, stacked_bar,
 };
 
@@ -46,9 +47,14 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
         ];
         let (summary, rest) = split_length(inner, 4);
         render_lines(frame, summary, lines);
-        let (chart, table) = split_length(rest, 5.min(rest.height / 2));
+        let chart_height = if rest.height >= 16 {
+            8
+        } else {
+            rest.height / 3
+        };
+        let (chart, table) = split_length(rest, chart_height);
         if chart.height > 0 {
-            frame.render_widget(spark(&snapshot.memory_history, Some(100), APP), chart);
+            frame.render_widget(AreaChart::percent(&snapshot.memory_history, APP), chart);
         }
         if table.height > 0 {
             frame.render_widget(

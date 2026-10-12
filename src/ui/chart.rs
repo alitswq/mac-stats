@@ -29,6 +29,18 @@ impl AreaChart {
             bottom_label: "0%",
         }
     }
+
+    /// Scales to the tallest sample. No axis labels, so a small card stays clear.
+    pub fn series(samples: &[u64], color: Color) -> Self {
+        let max = samples.iter().copied().max().unwrap_or(1).max(1);
+        Self {
+            samples: samples.to_vec(),
+            max,
+            color,
+            top_label: "",
+            bottom_label: "",
+        }
+    }
 }
 
 impl Widget for AreaChart {
@@ -192,19 +204,18 @@ fn paint_series(
     if columns == 0 || rows == 0 || samples.is_empty() || max == 0 {
         return;
     }
-    let pixels_x = columns * 2;
     let pixels_y = rows * 2;
-    // One pixel per sample, newest on the right. Do not stretch a short history
-    // across the plot; that turns a one-second spike into a screen-wide slope.
-    let visible = if samples.len() > pixels_x {
-        &samples[samples.len() - pixels_x..]
+    // One column per sample. Stretching a short history across the window turns
+    // a one-second spike into a slope the size of the screen.
+    let visible = if samples.len() > columns {
+        &samples[samples.len() - columns..]
     } else {
         samples
     };
-    let origin = pixels_x - visible.len();
+    let origin = columns - visible.len();
     let mut mask = vec![0u8; columns * rows];
     for (index, value) in visible.iter().copied().enumerate() {
-        let pixel_x = origin + index;
+        let column = origin + index;
         let filled = ((u128::from(value) * pixels_y as u128) / u128::from(max))
             .min(pixels_y as u128) as usize;
         for step in 0..filled {
@@ -212,8 +223,8 @@ fn paint_series(
                 Direction::Up => pixels_y - 1 - step,
                 Direction::Down => step,
             };
-            let cell = (pixel_y / 2) * columns + (pixel_x / 2);
-            mask[cell] |= quadrant_bit(pixel_x % 2, pixel_y % 2);
+            let cell = (pixel_y / 2) * columns + column;
+            mask[cell] |= quadrant_bit(0, pixel_y % 2) | quadrant_bit(1, pixel_y % 2);
         }
     }
     let style = Style::new().fg(color);
@@ -276,7 +287,7 @@ mod tests {
         let area = Rect::new(0, 0, 20, 10);
         let mut buf = Buffer::empty(area);
         Widget::render(AreaChart::percent(&[0, 100], Color::White), area, &mut buf);
-        assert_eq!(buf[(19, 9)].symbol(), "▐");
+        assert_eq!(buf[(19, 9)].symbol(), "█");
         assert_eq!(buf[(18, 9)].symbol(), " ");
         assert_eq!(buf[(0, 0)].symbol(), "1");
         assert_eq!(buf[(0, 9)].symbol(), "0");
@@ -297,7 +308,7 @@ mod tests {
             .join("");
         assert!(text.contains("50"));
         assert_eq!(buf[(23, 5)].symbol(), "─");
-        assert_eq!(buf[(23, 6)].symbol(), "▐");
+        assert_eq!(buf[(23, 6)].symbol(), "█");
         assert_eq!(buf[(22, 6)].symbol(), " ");
     }
 }

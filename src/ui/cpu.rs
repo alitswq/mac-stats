@@ -68,24 +68,23 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
     });
 }
 
-/// Graph height, per-core strip, and process table. The graph keeps the leftover space.
+/// History band, per-core strip, and process table. Extra rows go to the process list.
 fn section_heights(height: u16, has_cores: bool) -> (u16, u16, u16) {
-    const TABLE: u16 = 9;
-    const CORES: u16 = 5;
-    const GRAPH_MIN: u16 = 8;
+    const GRAPH: u16 = 10;
+    const CORES: u16 = 4;
+    const TABLE_MIN: u16 = 6;
     if height == 0 {
         return (0, 0, 0);
     }
     let cores = if has_cores { CORES } else { 0 };
-    if height >= GRAPH_MIN + cores + TABLE {
-        return (height - cores - TABLE, cores, TABLE);
+    if height >= GRAPH + cores + TABLE_MIN {
+        return (GRAPH, cores, height - GRAPH - cores);
     }
-    if height >= GRAPH_MIN + TABLE {
-        return (height - TABLE, 0, TABLE);
+    if height >= 6 + cores + TABLE_MIN {
+        return (height - cores - TABLE_MIN, cores, TABLE_MIN);
     }
-    if has_cores && height >= GRAPH_MIN + 3 {
-        let cores = (height - GRAPH_MIN).min(CORES);
-        return (height - cores, cores, 0);
+    if height >= 6 + TABLE_MIN {
+        return (height - TABLE_MIN, 0, TABLE_MIN);
     }
     (height, 0, 0)
 }
@@ -124,10 +123,10 @@ mod tests {
 
     #[test]
     fn the_history_graph_keeps_the_space_above_the_core_and_process_strips() {
-        assert_eq!(section_heights(32, true), (18, 5, 9));
-        assert_eq!(section_heights(17, true), (8, 0, 9));
-        assert_eq!(section_heights(16, true), (11, 5, 0));
+        assert_eq!(section_heights(32, true), (10, 4, 18));
+        assert_eq!(section_heights(17, true), (7, 4, 6));
+        assert_eq!(section_heights(12, true), (6, 0, 6));
         assert_eq!(section_heights(10, true), (10, 0, 0));
-        assert_eq!(section_heights(24, false), (15, 0, 9));
+        assert_eq!(section_heights(24, false), (10, 0, 14));
     }
 }
