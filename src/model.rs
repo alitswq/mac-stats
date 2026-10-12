@@ -1,3 +1,6 @@
+mod network_peaks;
+pub use network_peaks::{NetworkPeakHistory, NetworkPeaks, RatePeaks};
+
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -161,6 +164,7 @@ pub struct NetworkStats {
     pub up_total_bytes: u64,
     /// Shared axis for the upload and download graphs.
     pub rate_scale: u64,
+    pub peaks: NetworkPeaks,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -620,6 +624,19 @@ pub fn example_snapshot() -> Snapshot {
             down_total_bytes: 265 * 1024 * 1024,
             up_total_bytes: 54 * 1024 * 1024,
             rate_scale: nice_ceiling(20_000),
+            peaks: NetworkPeaks {
+                download: RatePeaks {
+                    minute: Some(30 * 1024),
+                    hour: Some(80 * 1024),
+                    day: Some(200 * 1024),
+                },
+                upload: RatePeaks {
+                    minute: Some(10 * 1024),
+                    hour: Some(40 * 1024),
+                    day: Some(100 * 1024),
+                },
+                observed_for: Duration::from_secs(7200),
+            },
         },
         top_cpu: vec![ProcessRow {
             name: "Docker".to_string(),

@@ -263,7 +263,7 @@ fn draw_net(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
             .local_ip
             .clone()
             .unwrap_or_else(|| "no address".to_string());
-        let lines = vec![
+        let mut lines = vec![
             Line::from(vec![
                 Span::styled("▼ ", Style::new().fg(APP)),
                 Span::styled(
@@ -292,9 +292,24 @@ fn draw_net(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                 Span::styled(ip, Style::new().dim()),
             ]),
         ];
-        let (text, chart) = super::split_length(inner, 3);
+        if inner.height < 10 {
+            let mut combined = lines[0].clone();
+            combined.spans.push(Span::raw("    "));
+            combined.spans.extend(lines[1].spans.clone());
+            if combined.width() <= inner.width as usize {
+                lines[0] = combined;
+                lines.remove(1);
+            }
+        }
+        let peaks = super::network::peak_lines(&network.peaks, inner.width, snapshot.rates_ready);
+        if inner.height as usize >= lines.len() + peaks.len() {
+            lines.extend(peaks);
+        } else if inner.height as usize > lines.len() {
+            lines.push(Line::from("Peak rates: 4 Network"));
+        }
+        let (text, chart) = super::split_length(inner, lines.len() as u16);
         render_lines(frame, text, lines);
-        if chart.height > 0 {
+        if chart.height >= 3 {
             frame.render_widget(
                 SplitChart::throughput(
                     &snapshot.net_up_history,

@@ -4,8 +4,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::format::{format_bytes, rate_text};
-use crate::model::Snapshot;
+use crate::format::{fit, format_bytes, rate_text};
+use crate::model::{NetworkPeaks, RatePeaks, Snapshot};
 
 use super::chart::SplitChart;
 use super::{APP, COMPRESSED, GREEN, RED, card, render_lines, split_length};
@@ -27,7 +27,7 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
             .clone()
             .unwrap_or_else(|| "no address".to_string());
         let mac = network.mac.clone().unwrap_or_else(|| "—".to_string());
-        let lines = vec![
+        let mut lines = vec![
             Line::from(vec![
                 Span::styled("▼ ", Style::new().fg(APP)),
                 Span::styled(
@@ -69,15 +69,15 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                 ),
             ]),
         ];
+        lines.extend(peak_lines(
+            &network.peaks,
+            inner.width,
+            snapshot.rates_ready,
+        ));
         let header = lines.len() as u16;
-        let header = if inner.height > header + 6 {
-            header
-        } else {
-            inner.height.saturating_sub(6)
-        };
         let (text, chart) = split_length(inner, header);
         render_lines(frame, text, lines);
-        if chart.height > 0 {
+        if chart.height >= 3 {
             frame.render_widget(
                 SplitChart::throughput(
                     &snapshot.net_up_history,
@@ -90,4 +90,53 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
             );
         }
     });
+}
+
+/// Compact columns keep both directions and all three windows visible together.
+pub(crate) fn peak_lines(
+    peaks: &NetworkPeaks,
+    width: u16,
+    rates_ready: bool,
+) -> Vec<Line<'static>> {
+    const LABEL_WIDTH: usize = 8;
+    let column_width = (width as usize).saturating_sub(LABEL_WIDTH) / 3;
+    let mut header = vec![Span::styled(
+        format!("{:<LABEL_WIDTH$}", "Peaks"),
+        Style::new().bold(),
+    )];
+    header.extend(
+        ["1m", "1h", "24h"]
+            .map(|label| Span::styled(format!("{label:<column_width$}"), Style::new().dim())),
+    );
+    let row = |label: &str, rates: &RatePeaks, color| {
+        let mut spans = vec![Span::styled(
+            format!("{label:<LABEL_WIDTH$}"),
+            Style::new().fg(color),
+        )];
+        spans.extend([rates.minute, rates.hour, rates.day].map(|rate| {
+            let value = fit(&rate_text(rate, rates_ready), column_width);
+            Span::styled(
+                format!("{value:<column_width$}"),
+                Style::new().fg(color).bold(),
+            )
+        }));
+        Line::from(spans)
+    };
+    let mut lines = vec![
+        Line::from(header),
+        row("▼ down", &peaks.download, APP),
+        row("▲ up", &peaks.upload, COMPRESSED),
+    ];
+    if peaks.observed_for.as_secs() < 86400 {
+        let seconds = peaks.observed_for.as_secs();
+        let observed = if seconds < 60 {
+            format!("{seconds}s")
+        } else if seconds < 3600 {
+            format!("{}m", seconds / 60)
+        } else {
+            format!("{}h {}m", seconds / 3600, seconds % 3600 / 60)
+        };
+        lines.push(Line::from(format!("Observed {observed}; windows filling")));
+    }
+    lines
 }

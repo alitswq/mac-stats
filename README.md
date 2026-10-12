@@ -10,7 +10,7 @@ The screen refreshes about once a second. Five views share that sample:
 | `1` | RAM | Used memory, the app / wired / compressed / free split, swap, history, top processes |
 | `2` | CPU | Overall, user, system, and idle time, cores, load, uptime, history, top processes |
 | `3` | Disk | Each user volume's free space and read/write rate, history, top processes |
-| `4` | Network | The default interface, down and up rates, history, totals since launch |
+| `4` | Network | The default interface, down and up rates, history, rolling peak rates, totals since launch |
 
 Essentials uses a two-by-two layout when the content area is at least 88 columns by 16 rows. The title and the footer take three rows, so that is a terminal of about 88 by 19. Otherwise the four cards stack.
 
@@ -68,13 +68,13 @@ Rates show `…` until the second sample, then `—` when a counter is missing.
 
 **Disk.** Volumes are the startup disk (`/`) and anything mounted directly under `/Volumes`. Hidden system mounts such as `/System/Volumes/Data` are left out. Each card shows free space, a capacity gauge, and read/write throughput. Throughput comes from the IOKit block-storage counters for that volume's disk. Volumes on the same physical disk share those counters. The graph draws read (blue) and write (red) from the same baseline. The process list is the top 8 by disk IO since the last sample.
 
-**Network.** The interface is the one used for the default route, found by matching a local UDP connect against the interface addresses. The card shows whether it is up, the local IPv4 address, the MAC address, and the current down and up rates. Download is blue and grows down from the center line. Upload is red and grows up from it. Both use one scale, so the same rate is the same height on either side. "Since launch" is the sum of samples taken while this process has been running, and it resets if the chosen interface changes. It is not the total since boot.
+**Network.** The interface is the one used for the default route, found by matching a local UDP connect against the interface addresses. The card shows whether it is up, the local IPv4 address, the MAC address, and the current down and up rates. Download is blue and grows down from the center line. Upload is red and grows up from it. Both use one scale with a labeled zero center, so the same rate is the same height on either side. "Since launch" is the sum of samples taken while this process has been running, and it resets if the chosen interface changes. It is not the total since boot. Both Network and Essentials show the highest observed download and upload rates over the rolling past minute, hour, and 24 hours. These peaks use elapsed time and remain in memory independently of the graph history. They reset when the active interface changes or the app restarts. The observation-time note indicates that longer windows are still filling; the app cannot recover traffic from before it started.
 
 **Essentials.** The same four headlines in one screen: CPU percent and history, the memory split, mounted user volumes, and the default interface. The Disk card lists each volume with free space and read/write rates, adding per-volume history when space allows. Smaller cards use compact summaries and show how many additional volumes are available in the Disk view. There is no process table on this view.
 
 ## Graphs
 
-History is kept in memory for about 10 minutes (600 one-second samples). Nothing is written to disk.
+Graph history is kept in memory for about 10 minutes (600 one-second samples). Nothing is written to disk.
 
 Each sample is one column, with the newest column on the right. A short trace stays on the right instead of being stretched across the window. CPU and memory use a fixed 0–100% axis. Disk and network use a 1-2-5 axis that rises as soon as traffic crosses the next step and steps back down slowly after a spike has left the history, so a bar keeps its height while it scrolls left.
 

@@ -501,6 +501,52 @@ mod tests {
     }
 
     #[test]
+    fn network_peak_windows_remain_visible_in_essentials_and_network() {
+        for (view, width, height) in [
+            (View::Essentials, 100, 24),
+            (View::Essentials, 100, 36),
+            (View::Essentials, 70, 36),
+            (View::Network, 70, 20),
+            (View::Network, 80, 24),
+        ] {
+            let text = view_text(view, width, height);
+            for value in [
+                "Peaks",
+                "1m",
+                "1h",
+                "24h",
+                "30 KB/s",
+                "80 KB/s",
+                "200 KB/s",
+                "10 KB/s",
+                "40 KB/s",
+                "100 KB/s",
+                "Observed 2h 0m",
+            ] {
+                assert!(
+                    text.contains(value),
+                    "missing {value} at {view:?} {width}x{height}:\n{text}"
+                );
+            }
+        }
+        let compact = view_text(View::Essentials, 70, 24);
+        assert!(compact.contains("Peak rates: 4 Network"), "{compact}");
+        let mut snapshot = example_snapshot();
+        snapshot.network.peaks.observed_for = std::time::Duration::from_secs(86400);
+        let text = snapshot_text(&snapshot, View::Network, 70, 20);
+        assert!(!text.contains("windows filling"), "{text}");
+        assert!(text.contains("200 KB/s"), "{text}");
+        snapshot.network.peaks = Default::default();
+        snapshot.rates_ready = false;
+        let text = snapshot_text(&snapshot, View::Network, 70, 20);
+        assert!(text.contains("Peaks"), "{text}");
+        assert!(
+            text.matches('…').count() >= 6,
+            "warming up must not invent peaks: {text}"
+        );
+    }
+
+    #[test]
     fn mini_bar_renders_fill_and_empty_fractions() {
         let empty = mini_bar(8, 0.0, APP);
         let empty_str: String = empty.spans.iter().map(|s| s.content.as_ref()).collect();

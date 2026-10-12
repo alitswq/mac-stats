@@ -12,9 +12,9 @@ use sysinfo::{
 
 use crate::model::{
     CoreCluster, CoreStats, CpuStats, CpuTicks, HISTORY_LEN, HeldScale, History, IfaceInfo,
-    NetworkStats, ProcessRow, Snapshot, TOP_PROCESS_COUNT, VolumeStats, bytes_per_second,
-    choose_interface, cluster_for, cpu_percents, is_user_volume, lookup_disk_counter, mean,
-    scale_delta,
+    NetworkPeakHistory, NetworkStats, ProcessRow, Snapshot, TOP_PROCESS_COUNT, VolumeStats,
+    bytes_per_second, choose_interface, cluster_for, cpu_percents, is_user_volume,
+    lookup_disk_counter, mean, scale_delta,
 };
 use mach::{CpuSample, MachHost, perf_core_counts};
 
@@ -37,6 +37,7 @@ pub struct Sampler {
     net_down_history: History,
     net_up_history: History,
     net_scale: HeldScale,
+    net_peak_history: NetworkPeakHistory,
     disk_read_history: HashMap<String, History>,
     disk_write_history: HashMap<String, History>,
     disk_scale: HashMap<String, HeldScale>,
@@ -64,6 +65,7 @@ impl Sampler {
             net_down_history: History::new(HISTORY_LEN),
             net_up_history: History::new(HISTORY_LEN),
             net_scale: HeldScale::new(),
+            net_peak_history: NetworkPeakHistory::default(),
             disk_read_history: HashMap::new(),
             disk_write_history: HashMap::new(),
             disk_scale: HashMap::new(),
@@ -316,6 +318,7 @@ impl Sampler {
                 self.net_down_history = History::new(HISTORY_LEN);
                 self.net_up_history = History::new(HISTORY_LEN);
                 self.net_scale = HeldScale::new();
+                self.net_peak_history = NetworkPeakHistory::default();
             }
             let data = self.networks.get(&iface.name);
             let (down_rate, up_rate) = if rates_ready {
@@ -345,6 +348,7 @@ impl Sampler {
                 down_total_bytes: self.net_down_total,
                 up_total_bytes: self.net_up_total,
                 rate_scale: 1,
+                peaks: Default::default(),
             }
         } else {
             empty_network()
@@ -352,6 +356,9 @@ impl Sampler {
         let peak = self.net_down_history.peak().max(self.net_up_history.peak());
         self.net_scale.update(peak, now);
         stats.rate_scale = self.net_scale.ceiling();
+        stats.peaks =
+            self.net_peak_history
+                .observe(now, stats.down_bytes_per_sec, stats.up_bytes_per_sec);
         stats
     }
 }
@@ -523,6 +530,7 @@ fn empty_network() -> NetworkStats {
         down_total_bytes: 0,
         up_total_bytes: 0,
         rate_scale: 1,
+        peaks: Default::default(),
     }
 }
 
@@ -533,7 +541,16 @@ mod tests {
     #[test]
     fn sampler_reads_this_mac() {
         let mut sampler = Sampler::new();
+        sampler.net_interface = Some("stale-interface".to_string());
+        sampler
+            .net_peak_history
+            .observe(Instant::now(), Some(u64::MAX), Some(u64::MAX));
         let first = sampler.sample();
+        assert_eq!(
+            first.network.peaks,
+            Default::default(),
+            "interface switch must reset peaks"
+        );
         assert!(
             first.memory.total_bytes > 1024 * 1024 * 1024,
             "installed memory was {}",
@@ -555,6 +572,30 @@ mod tests {
         std::thread::sleep(Duration::from_millis(400));
         let second = sampler.sample();
         assert!(second.rates_ready);
+        assert_eq!(
+            second.network.peaks.download.minute,
+            second.network.down_bytes_per_sec
+        );
+        assert_eq!(
+            second.network.peaks.download.hour,
+            second.network.down_bytes_per_sec
+        );
+        assert_eq!(
+            second.network.peaks.download.day,
+            second.network.down_bytes_per_sec
+        );
+        assert_eq!(
+            second.network.peaks.upload.minute,
+            second.network.up_bytes_per_sec
+        );
+        assert_eq!(
+            second.network.peaks.upload.hour,
+            second.network.up_bytes_per_sec
+        );
+        assert_eq!(
+            second.network.peaks.upload.day,
+            second.network.up_bytes_per_sec
+        );
         let usage = second.cpu.usage_percent.expect("cpu delta");
         assert!((0.0..=100.0).contains(&usage), "cpu {usage}");
         assert!(!second.cpu.cores.is_empty(), "no per-core samples");
