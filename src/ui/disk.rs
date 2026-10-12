@@ -2,14 +2,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Gauge, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::format::{format_bytes, rate_text};
 use crate::model::Snapshot;
 
 use super::chart::AreaChart;
 use super::{
-    APP, COMPRESSED, ProcessMetric, RED, YELLOW, card, process_table, render_lines, split_length,
+    APP, COMPRESSED, ProcessMetric, RED, YELLOW, card, mini_bar, process_table, render_lines,
+    split_length,
 };
 
 pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
@@ -55,7 +56,10 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                             Style::new().bold(),
                         ),
                         Span::raw(" "),
-                        Span::styled(format!("({:.0}% used)", ratio * 100.0), Style::new().dim()),
+                        Span::styled(
+                            format!("{:.0}% used", ratio * 100.0),
+                            Style::new().fg(gauge_color).bold(),
+                        ),
                     ]),
                     Line::from(vec![
                         Span::styled("read ", Style::new().dim()),
@@ -77,13 +81,17 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                     return;
                 }
                 let (gauge_area, chart) = split_length(rest, 1);
-                frame.render_widget(
-                    Gauge::default()
-                        .ratio(ratio.clamp(0.0, 1.0))
-                        .gauge_style(gauge_color)
-                        .use_unicode(true),
-                    gauge_area,
+                let mut capacity_spans = vec![Span::raw("0% [")];
+                capacity_spans.extend(
+                    mini_bar(
+                        gauge_area.width.saturating_sub(10) as usize,
+                        ratio,
+                        gauge_color,
+                    )
+                    .spans,
                 );
+                capacity_spans.push(Span::raw("] 100%"));
+                frame.render_widget(Paragraph::new(Line::from(capacity_spans)), gauge_area);
                 if chart.height > 0 {
                     frame.render_widget(
                         AreaChart::overlay(
@@ -118,5 +126,66 @@ fn split_length_bottom(area: Rect, bottom: u16) -> (Rect, Rect) {
         let [top, bottom_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(bottom)]).areas(area);
         (top, bottom_area)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::model::{View, example_snapshot};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn capacity_bars_show_the_full_scale_and_used_percentage() {
+        for (width, filled_at_88_percent) in [(70, 51), (80, 60), (160, 130)] {
+            for (total, free, percent) in
+                [(1000, 1000, 0), (1000, 120, 88), (1000, 0, 100), (0, 0, 0)]
+            {
+                let mut snapshot = example_snapshot();
+                snapshot.volumes[0].total_bytes = total;
+                snapshot.volumes[0].available_bytes = free;
+                snapshot.volumes.push(snapshot.volumes[0].clone());
+                let mut terminal = Terminal::new(TestBackend::new(width, 36)).unwrap();
+                terminal
+                    .draw(|frame| crate::ui::draw(frame, &snapshot, View::Disk))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let rows: Vec<String> = (0..buffer.area.height)
+                    .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+                    .collect();
+                let text = rows.join("\n");
+                assert_eq!(
+                    text.matches(&format!("{percent}% used")).count(),
+                    2,
+                    "{text}"
+                );
+                let bars: Vec<_> = rows.iter().filter(|row| row.contains("0% [")).collect();
+                assert_eq!(
+                    bars.len(),
+                    2,
+                    "missing capacity scale at width {width}:\n{text}"
+                );
+                for row in bars {
+                    assert!(
+                        row.contains("] 100%"),
+                        "missing full-capacity endpoint: {row}"
+                    );
+                    let track = row.split_once('[').unwrap().1.split_once(']').unwrap().0;
+                    assert_eq!(track.chars().count(), (width - 12) as usize);
+                    let expected_filled = match percent {
+                        0 => 0,
+                        88 => filled_at_88_percent,
+                        100 => (width - 12) as usize,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(track.matches('█').count(), expected_filled, "{row}");
+                    assert_eq!(
+                        track.matches('░').count(),
+                        (width - 12) as usize - expected_filled,
+                        "{row}"
+                    );
+                }
+            }
+        }
     }
 }
