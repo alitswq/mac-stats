@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Paragraph, Row, Sparkline, Table};
+use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
 
 use crate::format::{fit, format_bytes, format_cpu_process, format_rate};
 use crate::model::{ProcessRow, Snapshot, View, bar_widths};
@@ -23,7 +23,6 @@ pub(crate) const COMPRESSED: Color = Color::Rgb(232, 96, 109);
 pub(crate) const FREE: Color = Color::Rgb(128, 134, 142);
 pub(crate) const ECORE: Color = Color::Rgb(78, 196, 196);
 pub(crate) const PCORE: Color = Color::Rgb(150, 130, 232);
-pub(crate) const OK: Color = Color::Rgb(112, 196, 136);
 
 pub fn draw(frame: &mut Frame, snapshot: &Snapshot, view: View) {
     let area = frame.area();
@@ -103,24 +102,6 @@ where
 
 pub(crate) fn render_lines(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
     frame.render_widget(Paragraph::new(lines), area);
-}
-
-pub(crate) fn spark(data: &[u64], max: Option<u64>, color: Color) -> Sparkline<'static> {
-    let sparkline = Sparkline::default()
-        .data(tail(data, 80))
-        .style(Style::new().fg(color));
-    match max {
-        Some(max) => sparkline.max(max.max(1)),
-        None => sparkline,
-    }
-}
-
-fn tail(data: &[u64], width: usize) -> Vec<u64> {
-    if data.len() <= width {
-        data.to_vec()
-    } else {
-        data[data.len() - width..].to_vec()
-    }
 }
 
 pub(crate) fn stacked_bar(width: u16, parts: &[(u64, Color)]) -> Line<'static> {
@@ -263,6 +244,8 @@ mod tests {
         assert!(essentials.contains("Macintosh HD"));
         assert!(essentials.contains("en13"));
         assert!(essentials.contains("18%"));
+        assert!(essentials.contains('─'));
+        assert!(essentials.contains('█'));
 
         let ram = view_text(View::Ram, 100, 36);
         assert!(ram.contains("Docker"));

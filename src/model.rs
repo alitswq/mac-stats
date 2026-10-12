@@ -1,8 +1,8 @@
 use std::collections::{HashMap, VecDeque};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-/// One-second samples kept for the history graphs. Wide terminals draw one
-/// horizontal pixel per sample, so this is long enough to fill the window.
+/// One-second samples kept for the history graphs. Each sample is one column,
+/// so this fills a wide terminal without stretching a short trace.
 pub const HISTORY_LEN: usize = 600;
 pub const TOP_PROCESS_COUNT: usize = 8;
 
@@ -139,6 +139,8 @@ pub struct VolumeStats {
     pub write_bytes_per_sec: Option<u64>,
     pub read_history: Vec<u64>,
     pub write_history: Vec<u64>,
+    /// Shared axis for the read and write graphs. Held so a bar keeps its height as it scrolls.
+    pub rate_scale: u64,
 }
 
 impl VolumeStats {
@@ -157,6 +159,8 @@ pub struct NetworkStats {
     pub up_bytes_per_sec: Option<u64>,
     pub down_total_bytes: u64,
     pub up_total_bytes: u64,
+    /// Shared axis for the upload and download graphs.
+    pub rate_scale: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -404,6 +408,107 @@ impl History {
     pub fn samples(&self) -> Vec<u64> {
         self.values.iter().copied().collect()
     }
+
+    pub fn peak(&self) -> u64 {
+        self.values.iter().copied().max().unwrap_or(0)
+    }
+}
+
+/// Next 1-2-5 step at or above `value`. Rate charts use this as their axis.
+pub fn nice_ceiling(value: u64) -> u64 {
+    if value <= 1 {
+        return 1;
+    }
+    let mut magnitude: u64 = 1;
+    while let Some(next) = magnitude.checked_mul(10) {
+        if next > value {
+            break;
+        }
+        magnitude = next;
+    }
+    let bucket = value.div_ceil(magnitude);
+    let factor = if bucket <= 1 {
+        1
+    } else if bucket <= 2 {
+        2
+    } else if bucket <= 5 {
+        5
+    } else {
+        10
+    };
+    magnitude.saturating_mul(factor)
+}
+
+fn step_down(ceiling: u64) -> u64 {
+    if ceiling <= 1 {
+        return 1;
+    }
+    let mut magnitude: u64 = 1;
+    while let Some(next) = magnitude.checked_mul(10) {
+        if next > ceiling {
+            break;
+        }
+        magnitude = next;
+    }
+    match ceiling / magnitude {
+        0 | 1 => {
+            if magnitude < 10 {
+                1
+            } else {
+                (magnitude / 10).saturating_mul(5)
+            }
+        }
+        2 => magnitude,
+        5 => magnitude.saturating_mul(2),
+        _ => magnitude.saturating_mul(5),
+    }
+}
+
+/// Axis ceiling that jumps up with a new peak and steps down one rung at a time.
+#[derive(Clone, Debug)]
+pub struct HeldScale {
+    ceiling: u64,
+    calm_since: Option<Instant>,
+}
+
+const SCALE_HOLD: Duration = Duration::from_secs(30);
+
+impl HeldScale {
+    pub fn new() -> Self {
+        Self {
+            ceiling: 0,
+            calm_since: None,
+        }
+    }
+
+    pub fn ceiling(&self) -> u64 {
+        self.ceiling.max(1)
+    }
+
+    /// `peak` is the largest sample still in the history.
+    pub fn update(&mut self, peak: u64, now: Instant) {
+        let needed = nice_ceiling(peak);
+        if needed >= self.ceiling {
+            self.ceiling = needed;
+            self.calm_since = None;
+            return;
+        }
+        let since = *self.calm_since.get_or_insert(now);
+        if now.saturating_duration_since(since) >= SCALE_HOLD {
+            self.ceiling = step_down(self.ceiling).max(needed);
+            self.calm_since = if self.ceiling <= needed {
+                None
+            } else {
+                Some(now)
+            };
+        }
+    }
+}
+
+impl Default for HeldScale {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Largest-remainder widths that add up to `total_width`.
@@ -503,6 +608,7 @@ pub fn example_snapshot() -> Snapshot {
             write_bytes_per_sec: Some(16 * 1024),
             read_history: vec![100, 400, 200],
             write_history: vec![10, 20, 16],
+            rate_scale: nice_ceiling(400),
         }],
         network: NetworkStats {
             interface_name: "en13".to_string(),
@@ -513,6 +619,7 @@ pub fn example_snapshot() -> Snapshot {
             up_bytes_per_sec: Some(10 * 1024),
             down_total_bytes: 265 * 1024 * 1024,
             up_total_bytes: 54 * 1024 * 1024,
+            rate_scale: nice_ceiling(20_000),
         },
         top_cpu: vec![ProcessRow {
             name: "Docker".to_string(),
@@ -703,6 +810,52 @@ mod tests {
             history.push(value);
         }
         assert_eq!(history.samples(), vec![2, 3, 4]);
+        assert_eq!(history.peak(), 4);
+    }
+
+    #[test]
+    fn nice_ceiling_uses_the_one_two_five_ladder() {
+        assert_eq!(nice_ceiling(0), 1);
+        assert_eq!(nice_ceiling(1), 1);
+        assert_eq!(nice_ceiling(2), 2);
+        assert_eq!(nice_ceiling(3), 5);
+        assert_eq!(nice_ceiling(6), 10);
+        assert_eq!(nice_ceiling(100), 100);
+        assert_eq!(nice_ceiling(101), 200);
+        assert_eq!(nice_ceiling(400), 500);
+        assert_eq!(nice_ceiling(18_000), 20_000);
+        assert_eq!(nice_ceiling(20_000), 20_000);
+        assert_eq!(nice_ceiling(20_001), 50_000);
+    }
+
+    #[test]
+    fn scale_holds_under_the_ceiling_and_steps_down_one_rung() {
+        let mut scale = HeldScale::new();
+        let start = Instant::now();
+        scale.update(18_000, start);
+        assert_eq!(scale.ceiling(), 20_000);
+        scale.update(19_500, start + Duration::from_secs(5));
+        assert_eq!(scale.ceiling(), 20_000);
+        scale.update(20_001, start + Duration::from_secs(6));
+        assert_eq!(scale.ceiling(), 50_000);
+
+        scale.update(1, start + Duration::from_secs(6));
+        scale.update(1, start + Duration::from_secs(35));
+        assert_eq!(scale.ceiling(), 50_000);
+        scale.update(1, start + Duration::from_secs(36));
+        assert_eq!(scale.ceiling(), 20_000);
+
+        let mut now = start + Duration::from_secs(36);
+        let mut seen = vec![scale.ceiling()];
+        for _ in 0..7 {
+            now += Duration::from_secs(30);
+            scale.update(1, now);
+            seen.push(scale.ceiling());
+        }
+        assert_eq!(
+            seen,
+            vec![20_000, 10_000, 5_000, 2_000, 1_000, 500, 200, 100]
+        );
     }
 
     #[test]

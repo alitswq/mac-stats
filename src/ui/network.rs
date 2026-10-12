@@ -64,6 +64,7 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                 SplitChart::throughput(
                     &snapshot.net_up_history,
                     &snapshot.net_down_history,
+                    snapshot.network.rate_scale,
                     COMPRESSED,
                     APP,
                 ),

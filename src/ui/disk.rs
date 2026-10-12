@@ -8,7 +8,7 @@ use crate::format::{format_bytes, rate_text};
 use crate::model::Snapshot;
 
 use super::chart::AreaChart;
-use super::{APP, ProcessMetric, card, process_table, render_lines, split_length};
+use super::{APP, COMPRESSED, ProcessMetric, card, process_table, render_lines, split_length};
 
 pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
     let (volumes_area, table_area) = split_length_bottom(area, 11);
@@ -56,8 +56,17 @@ pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
                         .use_unicode(true),
                     gauge_area,
                 );
-                if chart.height > 1 {
-                    frame.render_widget(AreaChart::series(&volume.read_history, APP), chart);
+                if chart.height > 0 {
+                    frame.render_widget(
+                        AreaChart::overlay(
+                            &[
+                                (&volume.read_history, APP),
+                                (&volume.write_history, COMPRESSED),
+                            ],
+                            volume.rate_scale,
+                        ),
+                        chart,
+                    );
                 }
             });
         }

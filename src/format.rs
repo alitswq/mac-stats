@@ -228,6 +228,10 @@ mod tests {
         assert_eq!(format_bytes(17 * 1024 * 1024 + 300 * 1024), "17.3 MB");
         assert_eq!(format_bytes(94 * 1024 * 1024 * 1024), "94.00 GB");
         assert_eq!(format_rate(16 * 1024), "16 KB/s");
+        for rate in [0, 1, 500, 1023, 20_000, 1024 * 1024, 100 * 1024 * 1024] {
+            let label = format_rate(rate);
+            assert!(label.chars().count() <= 10, "{label}");
+        }
     }
 
     #[test]

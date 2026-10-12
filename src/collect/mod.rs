@@ -11,9 +11,10 @@ use sysinfo::{
 };
 
 use crate::model::{
-    CoreCluster, CoreStats, CpuStats, CpuTicks, HISTORY_LEN, History, IfaceInfo, NetworkStats,
-    ProcessRow, Snapshot, TOP_PROCESS_COUNT, VolumeStats, bytes_per_second, choose_interface,
-    cluster_for, cpu_percents, is_user_volume, lookup_disk_counter, mean, scale_delta,
+    CoreCluster, CoreStats, CpuStats, CpuTicks, HISTORY_LEN, HeldScale, History, IfaceInfo,
+    NetworkStats, ProcessRow, Snapshot, TOP_PROCESS_COUNT, VolumeStats, bytes_per_second,
+    choose_interface, cluster_for, cpu_percents, is_user_volume, lookup_disk_counter, mean,
+    scale_delta,
 };
 use mach::{CpuSample, MachHost, perf_core_counts};
 
@@ -35,8 +36,10 @@ pub struct Sampler {
     memory_history: History,
     net_down_history: History,
     net_up_history: History,
+    net_scale: HeldScale,
     disk_read_history: HashMap<String, History>,
     disk_write_history: HashMap<String, History>,
+    disk_scale: HashMap<String, HeldScale>,
 }
 
 impl Sampler {
@@ -60,8 +63,10 @@ impl Sampler {
             memory_history: History::new(HISTORY_LEN),
             net_down_history: History::new(HISTORY_LEN),
             net_up_history: History::new(HISTORY_LEN),
+            net_scale: HeldScale::new(),
             disk_read_history: HashMap::new(),
             disk_write_history: HashMap::new(),
+            disk_scale: HashMap::new(),
         }
     }
 
@@ -97,8 +102,8 @@ impl Sampler {
         let disk_counters = disk_io::sample_disk_counters();
         let cpu = self.cpu_stats(cpu_sample.as_ref(), rates_ready);
         let processes = process_rows(&self.system, rates_ready, elapsed);
-        let mut volumes = self.volumes(&disk_counters, rates_ready, elapsed);
-        let network = self.network(rates_ready, elapsed);
+        let mut volumes = self.volumes(&disk_counters, rates_ready, elapsed, now);
+        let network = self.network(rates_ready, elapsed, now);
 
         self.previous_disk = disk_counters;
         if let Some(sample) = cpu_sample {
@@ -200,6 +205,7 @@ impl Sampler {
         counters: &HashMap<String, (u64, u64)>,
         rates_ready: bool,
         elapsed: Duration,
+        now: Instant,
     ) -> Vec<VolumeStats> {
         let mounted: Vec<MountedVolume> = self
             .disks
@@ -266,6 +272,12 @@ impl Sampler {
             if let Some(rate) = write_rate {
                 write_history.push(rate);
             }
+            let peak = read_history.peak().max(write_history.peak());
+            let rate_scale = {
+                let scale = self.disk_scale.entry(disk.mount.clone()).or_default();
+                scale.update(peak, now);
+                scale.ceiling()
+            };
             next_read.insert(disk.mount.clone(), read_history);
             next_write.insert(disk.mount.clone(), write_history);
             volumes.push(VolumeStats {
@@ -277,10 +289,13 @@ impl Sampler {
                 write_bytes_per_sec: write_rate,
                 read_history: Vec::new(),
                 write_history: Vec::new(),
+                rate_scale,
             });
         }
         self.disk_read_history = next_read;
         self.disk_write_history = next_write;
+        self.disk_scale
+            .retain(|mount, _| self.disk_read_history.contains_key(mount));
         volumes.sort_by(|left, right| {
             mount_rank(&left.mount_point)
                 .cmp(&mount_rank(&right.mount_point))
@@ -289,48 +304,55 @@ impl Sampler {
         volumes
     }
 
-    fn network(&mut self, rates_ready: bool, elapsed: Duration) -> NetworkStats {
+    fn network(&mut self, rates_ready: bool, elapsed: Duration, now: Instant) -> NetworkStats {
         let ifaces = interface_list(&self.networks);
         let primary = primary_ipv4();
         let chosen = choose_interface(&ifaces, primary.as_deref()).map(|index| &ifaces[index]);
-        let Some(iface) = chosen else {
-            return empty_network();
-        };
-        if self.net_interface.as_deref() != Some(iface.name.as_str()) {
-            self.net_interface = Some(iface.name.clone());
-            self.net_down_total = 0;
-            self.net_up_total = 0;
-            self.net_down_history = History::new(HISTORY_LEN);
-            self.net_up_history = History::new(HISTORY_LEN);
-        }
-        let data = self.networks.get(&iface.name);
-        let (down_rate, up_rate) = if rates_ready {
-            if let Some(data) = data {
-                let down = data.received();
-                let up = data.transmitted();
-                self.net_down_total = self.net_down_total.saturating_add(down);
-                self.net_up_total = self.net_up_total.saturating_add(up);
-                let down_rate = scale_delta(down, elapsed);
-                let up_rate = scale_delta(up, elapsed);
-                self.net_down_history.push(down_rate);
-                self.net_up_history.push(up_rate);
-                (Some(down_rate), Some(up_rate))
+        let mut stats = if let Some(iface) = chosen {
+            if self.net_interface.as_deref() != Some(iface.name.as_str()) {
+                self.net_interface = Some(iface.name.clone());
+                self.net_down_total = 0;
+                self.net_up_total = 0;
+                self.net_down_history = History::new(HISTORY_LEN);
+                self.net_up_history = History::new(HISTORY_LEN);
+                self.net_scale = HeldScale::new();
+            }
+            let data = self.networks.get(&iface.name);
+            let (down_rate, up_rate) = if rates_ready {
+                if let Some(data) = data {
+                    let down = data.received();
+                    let up = data.transmitted();
+                    self.net_down_total = self.net_down_total.saturating_add(down);
+                    self.net_up_total = self.net_up_total.saturating_add(up);
+                    let down_rate = scale_delta(down, elapsed);
+                    let up_rate = scale_delta(up, elapsed);
+                    self.net_down_history.push(down_rate);
+                    self.net_up_history.push(up_rate);
+                    (Some(down_rate), Some(up_rate))
+                } else {
+                    (None, None)
+                }
             } else {
                 (None, None)
+            };
+            NetworkStats {
+                interface_name: iface.name.clone(),
+                is_up: iface.is_up,
+                local_ip: iface.ipv4.clone(),
+                mac: iface.mac.clone(),
+                down_bytes_per_sec: down_rate,
+                up_bytes_per_sec: up_rate,
+                down_total_bytes: self.net_down_total,
+                up_total_bytes: self.net_up_total,
+                rate_scale: 1,
             }
         } else {
-            (None, None)
+            empty_network()
         };
-        NetworkStats {
-            interface_name: iface.name.clone(),
-            is_up: iface.is_up,
-            local_ip: iface.ipv4.clone(),
-            mac: iface.mac.clone(),
-            down_bytes_per_sec: down_rate,
-            up_bytes_per_sec: up_rate,
-            down_total_bytes: self.net_down_total,
-            up_total_bytes: self.net_up_total,
-        }
+        let peak = self.net_down_history.peak().max(self.net_up_history.peak());
+        self.net_scale.update(peak, now);
+        stats.rate_scale = self.net_scale.ceiling();
+        stats
     }
 }
 
@@ -500,6 +522,7 @@ fn empty_network() -> NetworkStats {
         up_bytes_per_sec: None,
         down_total_bytes: 0,
         up_total_bytes: 0,
+        rate_scale: 1,
     }
 }
 

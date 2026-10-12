@@ -6,7 +6,8 @@ use ratatui::text::Line;
 use crate::format::{format_bytes, format_load, format_percent, percent_text, rate_text};
 use crate::model::Snapshot;
 
-use super::{APP, COMPRESSED, FREE, OK, WIRED, card, render_lines, spark, stacked_bar};
+use super::chart::{AreaChart, SplitChart};
+use super::{APP, COMPRESSED, FREE, WIRED, card, render_lines, stacked_bar};
 
 pub fn draw(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
     let wide = area.width >= 88 && area.height >= 16;
@@ -64,7 +65,7 @@ fn draw_cpu(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
         let (text, chart) = super::split_length(inner, text_rows.min(inner.height));
         render_lines(frame, text, lines);
         if chart.height > 0 {
-            frame.render_widget(spark(&snapshot.cpu_history, Some(100), APP), chart);
+            frame.render_widget(AreaChart::percent(&snapshot.cpu_history, APP), chart);
         }
     });
 }
@@ -104,7 +105,12 @@ fn draw_ram(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
             )),
             Line::from(format!("swap {}", format_bytes(memory.swap_used_bytes))),
         ];
-        render_lines(frame, inner, lines);
+        let text_rows = lines.len() as u16;
+        let (text, chart) = super::split_length(inner, text_rows.min(inner.height));
+        render_lines(frame, text, lines);
+        if chart.height > 0 {
+            frame.render_widget(AreaChart::percent(&snapshot.memory_history, APP), chart);
+        }
     });
 }
 
@@ -130,7 +136,16 @@ fn draw_disk(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
         let (text, chart) = super::split_length(inner, 3);
         render_lines(frame, text, lines);
         if chart.height > 0 {
-            frame.render_widget(spark(&volume.read_history, None, APP), chart);
+            frame.render_widget(
+                AreaChart::overlay(
+                    &[
+                        (&volume.read_history, APP),
+                        (&volume.write_history, COMPRESSED),
+                    ],
+                    volume.rate_scale,
+                ),
+                chart,
+            );
         }
     });
 }
@@ -162,7 +177,16 @@ fn draw_net(frame: &mut Frame, area: Rect, snapshot: &Snapshot) {
         let (text, chart) = super::split_length(inner, 3);
         render_lines(frame, text, lines);
         if chart.height > 0 {
-            frame.render_widget(spark(&snapshot.net_down_history, None, OK), chart);
+            frame.render_widget(
+                SplitChart::throughput(
+                    &snapshot.net_up_history,
+                    &snapshot.net_down_history,
+                    snapshot.network.rate_scale,
+                    COMPRESSED,
+                    APP,
+                ),
+                chart,
+            );
         }
     });
 }
