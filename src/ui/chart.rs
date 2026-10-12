@@ -5,7 +5,10 @@ use ratatui::widgets::Widget;
 
 use crate::format::format_rate;
 
-const LEVELS: [&str; 9] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+/// Solid 2×2 blocks. The index is a bitmask: upper-left, upper-right, lower-left, lower-right.
+const QUADRANTS: [&str; 16] = [
+    " ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█",
+];
 
 /// Filled history that uses the whole plot. New samples sit on the right.
 pub struct AreaChart {
@@ -184,92 +187,67 @@ fn paint_series(
     color: Color,
     direction: Direction,
 ) {
-    if area.width == 0 || area.height == 0 || samples.is_empty() {
+    let columns = area.width as usize;
+    let rows = area.height as usize;
+    if columns == 0 || rows == 0 || samples.is_empty() || max == 0 {
         return;
     }
-    let count = samples.len().min(area.width as usize);
-    let start = samples.len() - count;
-    let spans = column_spans(count, area.width as usize);
-    let mut x = area.x;
-    for (sample, span) in samples[start..].iter().zip(spans) {
-        let ticks = eighths(*sample, max, area.height);
-        for _ in 0..span {
-            paint_column(buf, x, area.y, area.height, ticks, color, direction);
-            x += 1;
+    let mut mask = vec![0u8; columns * rows];
+    let pixels_x = columns * 2;
+    let pixels_y = rows * 2;
+    for pixel_x in 0..pixels_x {
+        let value = sample_at(samples, pixel_x, pixels_x);
+        let filled =
+            ((value as u128) * (pixels_y as u128) / (max as u128)).min(pixels_y as u128) as usize;
+        for step in 0..filled {
+            let pixel_y = match direction {
+                Direction::Up => pixels_y - 1 - step,
+                Direction::Down => step,
+            };
+            let cell = (pixel_y / 2) * columns + (pixel_x / 2);
+            mask[cell] |= quadrant_bit(pixel_x % 2, pixel_y % 2);
         }
     }
-}
-
-fn paint_column(
-    buf: &mut Buffer,
-    x: u16,
-    top: u16,
-    cells: u16,
-    ticks: u64,
-    color: Color,
-    direction: Direction,
-) {
     let style = Style::new().fg(color);
-    let mut remaining = ticks;
-    let paint = |buf: &mut Buffer, row: u16, level: u64| {
-        let symbol = match direction {
-            Direction::Up => LEVELS[level as usize],
-            Direction::Down => down_symbol(level),
-        };
-        if level > 0 {
-            buf[(x, top + row)].set_symbol(symbol).set_style(style);
+    for (index, bits) in mask.into_iter().enumerate() {
+        if bits == 0 {
+            continue;
         }
+        let x = area.x + (index % columns) as u16;
+        let y = area.y + (index / columns) as u16;
+        buf[(x, y)]
+            .set_symbol(QUADRANTS[bits as usize])
+            .set_style(style);
+    }
+}
+
+fn quadrant_bit(pixel_x: usize, pixel_y: usize) -> u8 {
+    match (pixel_x, pixel_y) {
+        (0, 0) => 0b0001,
+        (1, 0) => 0b0010,
+        (0, 1) => 0b0100,
+        _ => 0b1000,
+    }
+}
+
+/// Linear sample across the plot. Pixel 0 is the oldest sample and the last pixel is the newest.
+fn sample_at(samples: &[u64], pixel: usize, pixels: usize) -> u64 {
+    let last = samples.len() - 1;
+    if last == 0 || pixels <= 1 {
+        return samples[last];
+    }
+    let span = (pixels - 1) as u128;
+    let numer = pixel as u128 * last as u128;
+    let index = (numer / span) as usize;
+    let toward = numer % span;
+    let left = u128::from(samples[index]);
+    let right = u128::from(samples[(index + 1).min(last)]);
+    let value = if right >= left {
+        left + (right - left) * toward / span
+    } else {
+        left - (left - right) * toward / span
     };
-    match direction {
-        Direction::Up => {
-            for row in (0..cells).rev() {
-                let level = remaining.min(8);
-                paint(buf, row, level);
-                remaining = remaining.saturating_sub(8);
-            }
-        }
-        Direction::Down => {
-            for row in 0..cells {
-                let level = remaining.min(8);
-                paint(buf, row, level);
-                remaining = remaining.saturating_sub(8);
-            }
-        }
-    }
-}
-
-fn down_symbol(level: u64) -> &'static str {
-    match level {
-        0 => " ",
-        1 | 2 => "▔",
-        3..=7 => "▀",
-        _ => "█",
-    }
-}
-
-fn eighths(value: u64, max: u64, cells: u16) -> u64 {
-    if value == 0 || max == 0 || cells == 0 {
-        return 0;
-    }
-    let ticks = u128::from(cells) * 8;
-    let scaled = u128::from(value) * ticks / u128::from(max);
-    scaled.min(ticks) as u64
-}
-
-/// Widths that add up to `width`. The newest sample, on the right, takes any remainder.
-fn column_spans(samples: usize, width: usize) -> Vec<usize> {
-    if samples == 0 || width == 0 {
-        return Vec::new();
-    }
-    let count = samples.min(width);
-    let base = width / count;
-    let extra = width % count;
-    (0..count)
-        .map(|index| {
-            let from_right = count - 1 - index;
-            if from_right < extra { base + 1 } else { base }
-        })
-        .collect()
+    value as u64
 }
 
 fn split_rows(height: u16) -> (u16, u16, u16) {
@@ -289,12 +267,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn column_spans_fill_the_width_with_the_newest_sample_on_the_right() {
-        assert!(column_spans(0, 10).is_empty());
-        assert_eq!(column_spans(10, 10), vec![1; 10]);
-        let spans = column_spans(3, 10);
-        assert_eq!(spans.iter().sum::<usize>(), 10);
-        assert!(spans[2] >= spans[0]);
+    fn samples_are_interpolated_from_oldest_to_newest() {
+        assert_eq!(sample_at(&[40], 3, 8), 40);
+        assert_eq!(sample_at(&[0, 100], 0, 5), 0);
+        assert_eq!(sample_at(&[0, 100], 2, 5), 50);
+        assert_eq!(sample_at(&[0, 100], 4, 5), 100);
+    }
+
+    #[test]
+    fn a_ramp_rises_across_the_plot_instead_of_forming_two_blocks() {
+        let area = Rect::new(0, 0, 20, 10);
+        let mut buf = Buffer::empty(area);
+        Widget::render(AreaChart::percent(&[0, 100], Color::White), area, &mut buf);
+        let ink = |x| {
+            (0..area.height)
+                .filter(|y| buf[(x, *y)].symbol() != " ")
+                .count()
+        };
+        assert!(ink(5) < ink(12));
+        assert!(ink(12) < ink(19));
     }
 
     #[test]
