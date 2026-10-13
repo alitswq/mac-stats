@@ -12,19 +12,32 @@ pub fn codex(
         return Err("Invalid Codex quota response");
     }
     let mut windows = Vec::new();
+    let mut statuses = Vec::new();
+    if limits["ordinaryUsageAllowed"].as_bool() == Some(false) {
+        statuses.push("Ordinary Codex usage is unavailable.".to_string());
+    }
+    if let Some(status) = codex_status(&limits["rateLimits"]) {
+        statuses.push(status);
+    }
     if let Some(groups) = limits["rateLimitsByLimitId"]
         .as_object()
         .filter(|groups| !groups.is_empty())
     {
         for (id, group) in groups {
             codex_windows(group, &safe_text(id), &mut windows)?;
+            if let Some(status) = codex_status(group) {
+                statuses.push(status);
+            }
         }
     } else if !limits["rateLimits"].is_null() {
         codex_windows(&limits["rateLimits"], "codex", &mut windows)?;
     }
-    let message = windows
-        .is_empty()
-        .then(|| "Subscription allowance not reported by Codex.".into());
+    if windows.is_empty() {
+        statuses.push("Subscription allowance not reported by Codex.".into());
+    }
+    statuses.sort();
+    statuses.dedup();
+    let message = (!statuses.is_empty()).then(|| statuses.join(" "));
     Ok(ProviderUsage {
         observed_at: Some(now),
         windows,
@@ -34,6 +47,17 @@ pub fn codex(
         },
         message,
         ..Default::default()
+    })
+}
+
+fn codex_status(group: &Value) -> Option<String> {
+    let reached = &group["rateLimitReachedType"];
+    if reached.is_null() {
+        return None;
+    }
+    Some(match reached.as_str() {
+        Some(reason) => format!("Provider limit reached: {}.", safe_text(reason)),
+        None => "Provider reports a reached usage limit.".into(),
     })
 }
 
@@ -99,8 +123,8 @@ pub fn claude(snapshot: &Value, now: u64) -> Result<ProviderUsage, &'static str>
         windows,
         model: data["model"]["display_name"].as_str().map(safe_text),
         tokens: TokenUsage {
-            input: data["context_window"]["total_input_tokens"].as_u64(),
-            output: data["context_window"]["total_output_tokens"].as_u64(),
+            context_input: data["context_window"]["total_input_tokens"].as_u64(),
+            context_output: data["context_window"]["total_output_tokens"].as_u64(),
             estimated_session_cost: data["cost"]["total_cost_usd"]
                 .as_f64()
                 .filter(|cost| cost.is_finite() && *cost >= 0.0),
@@ -187,7 +211,50 @@ mod tests {
     }
 
     #[test]
-    fn claude_preserves_the_feed_timestamp_and_labels_session_usage() {
+    fn codex_preserves_reached_limit_status_alongside_remaining_window_allowance() {
+        let usage = codex(
+            &json!({"rateLimitsByLimitId": {"codex": {
+                "rateLimitReachedType": "workspaceCredits",
+                "primary": {"usedPercent": 25, "windowDurationMins": 300, "resetsAt": 4000}
+            }}}),
+            None,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(usage.windows[0].remaining_percent(1000), Some(75.0));
+        assert!(
+            usage
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("workspaceCredits"))
+        );
+        let restricted = codex(
+            &json!({"ordinaryUsageAllowed": false,
+                "rateLimits": {"primary": {"usedPercent": 25}}
+            }),
+            None,
+            1000,
+        )
+        .unwrap();
+        assert!(
+            restricted
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("unavailable"))
+        );
+        let no_extra_credits = codex(
+            &json!({"rateLimits": {
+                "credits": {"hasCredits": false}, "primary": {"usedPercent": 25}
+            }}),
+            None,
+            1000,
+        )
+        .unwrap();
+        assert!(no_extra_credits.message.is_none());
+    }
+
+    #[test]
+    fn claude_preserves_the_feed_timestamp_and_context_usage() {
         let snapshot = json!({"schema_version": 1, "observed_at": 1000, "data": {
             "rate_limits": {
                 "five_hour": {"used_percentage": 40, "resets_at": 4000},
@@ -201,8 +268,8 @@ mod tests {
         assert!(usage.is_stale(1400));
         assert_eq!(usage.observed_at, Some(1000));
         assert_eq!(usage.windows[0].remaining_percent(1400), Some(60.0));
-        assert_eq!(usage.tokens.input, Some(123));
-        assert_eq!(usage.tokens.output, Some(45));
+        assert_eq!(usage.tokens.context_input, Some(123));
+        assert_eq!(usage.tokens.context_output, Some(45));
         assert_eq!(usage.tokens.estimated_session_cost, Some(1.25));
     }
 
@@ -260,7 +327,7 @@ mod tests {
                 .chars()
                 .all(|character| !character.is_control())
         );
-        assert_eq!(usage.tokens.input, None);
+        assert_eq!(usage.tokens.context_input, None);
         assert_eq!(usage.tokens.estimated_session_cost, None);
     }
 }

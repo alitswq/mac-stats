@@ -35,7 +35,10 @@ impl AiMonitor {
                 message: Some("Reading Codex account allowance...".into()),
                 ..Default::default()
             },
-            claude: read_claude(&path, now_unix()),
+            claude: ProviderUsage {
+                message: Some("Reading Claude Code usage feed...".into()),
+                ..Default::default()
+            },
         };
         let mut snapshot = latest.clone();
         let worker = thread::Builder::new()
@@ -46,13 +49,14 @@ impl AiMonitor {
                     if canceled.load(Ordering::Relaxed) {
                         break;
                     }
+                    merge(&mut snapshot.claude, read_claude(&path, now_unix()));
+                    let _ = sender.try_send(snapshot.clone());
                     if last_codex
                         .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(60))
                     {
                         merge(&mut snapshot.codex, codex(&canceled));
                         last_codex = Some(Instant::now());
                     }
-                    merge(&mut snapshot.claude, read_claude(&path, now_unix()));
                     let _ = sender.try_send(snapshot.clone());
                     if stopping.recv_timeout(Duration::from_secs(2)).is_ok() {
                         break;
@@ -81,7 +85,15 @@ impl Drop for AiMonitor {
         self.cancel.store(true, Ordering::Relaxed);
         let _ = self.stop.send(());
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            // Filesystem stalls must not delay terminal restoration indefinitely.
+            // Ordinary collectors observe cancellation and finish before this deadline.
+            let deadline = Instant::now() + Duration::from_millis(200);
+            while !worker.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(2));
+            }
+            if worker.is_finished() {
+                let _ = worker.join();
+            }
         }
     }
 }
@@ -161,5 +173,32 @@ mod tests {
         assert!(monitor.snapshot().codex.windows.is_empty());
         drop(monitor);
         assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn shutdown_does_not_wait_indefinitely_for_an_unresponsive_collector() {
+        let entered = Arc::new(AtomicBool::new(false));
+        let started = Arc::clone(&entered);
+        let monitor = AiMonitor::start_with(
+            PathBuf::from("/tmp/mac-stats-no-claude-test-feed"),
+            move |_| {
+                started.store(true, Ordering::Relaxed);
+                thread::sleep(Duration::from_millis(800));
+                ProviderUsage::default()
+            },
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !entered.load(Ordering::Relaxed) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(entered.load(Ordering::Relaxed));
+        let start = Instant::now();
+        drop(monitor);
+        assert!(
+            start.elapsed() < Duration::from_millis(400),
+            "shutdown blocked for {:?}",
+            start.elapsed()
+        );
     }
 }

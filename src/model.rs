@@ -17,6 +17,7 @@ pub enum View {
     Cpu,
     Disk,
     Network,
+    Ai,
 }
 
 impl View {
@@ -27,6 +28,7 @@ impl View {
             '2' => Some(Self::Cpu),
             '3' => Some(Self::Disk),
             '4' => Some(Self::Network),
+            '6' => Some(Self::Ai),
             _ => None,
         }
     }
@@ -38,6 +40,7 @@ impl View {
             Self::Cpu => "2 CPU",
             Self::Disk => "3 Disk",
             Self::Network => "4 Network",
+            Self::Ai => "6 AI",
         }
     }
 
@@ -48,6 +51,7 @@ impl View {
             Self::Cpu,
             Self::Disk,
             Self::Network,
+            Self::Ai,
         ]
     }
 
@@ -680,7 +684,9 @@ mod tests {
         assert_eq!(View::from_key('4'), Some(View::Network));
         assert_eq!(View::from_key('q'), None);
         assert_eq!(View::Essentials.next(), View::Ram);
-        assert_eq!(View::Network.next(), View::Essentials);
+        assert_eq!(View::Network.next(), View::Ai);
+        assert_eq!(View::Ai.next(), View::Essentials);
+        assert_eq!(View::from_key('6'), Some(View::Ai));
         assert_eq!(View::Ram.previous(), View::Essentials);
     }
 

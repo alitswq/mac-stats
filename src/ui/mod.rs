@@ -1,3 +1,4 @@
+mod ai;
 mod chart;
 mod cpu;
 mod disk;
@@ -30,6 +31,22 @@ pub(crate) const RED: Color = Color::Rgb(248, 113, 113);
 pub(crate) const MUTED: Color = Color::Rgb(100, 106, 115);
 
 pub fn draw(frame: &mut Frame, snapshot: &Snapshot, view: View) {
+    draw_with_ai(
+        frame,
+        snapshot,
+        view,
+        &crate::ai::AiSnapshot::default(),
+        crate::ai::now_unix(),
+    );
+}
+
+pub fn draw_with_ai(
+    frame: &mut Frame,
+    snapshot: &Snapshot,
+    view: View,
+    ai_snapshot: &crate::ai::AiSnapshot,
+    now: u64,
+) {
     let area = frame.area();
     if area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT {
         frame.render_widget(
@@ -55,6 +72,7 @@ pub fn draw(frame: &mut Frame, snapshot: &Snapshot, view: View) {
         View::Cpu => cpu::draw(frame, body, snapshot),
         View::Disk => disk::draw(frame, body, snapshot),
         View::Network => network::draw(frame, body, snapshot),
+        View::Ai => ai::draw(frame, body, ai_snapshot, now),
     }
 }
 
@@ -119,9 +137,7 @@ fn draw_header(frame: &mut Frame, area: Rect, snapshot: &Snapshot, view: View) {
 
 fn draw_footer(frame: &mut Frame, area: Rect) {
     let spans = vec![
-        Span::styled(" 5", Style::new().fg(APP).bold()),
-        Span::raw(" "),
-        Span::styled("1-4", Style::new().fg(APP).bold()),
+        Span::styled(" 1-6", Style::new().fg(APP).bold()),
         Span::styled(" views  │  ", Style::new().dim()),
         Span::styled("Tab", Style::new().fg(APP).bold()),
         Span::styled(" or ", Style::new().dim()),
@@ -136,7 +152,7 @@ fn draw_footer(frame: &mut Frame, area: Rect) {
     let hints = Line::from(spans);
     let hints = if hints.width() + credit.width() + 2 > area.width as usize {
         Line::from(vec![
-            Span::styled(" 5/1-4", Style::new().fg(APP).bold()),
+            Span::styled(" 1-6", Style::new().fg(APP).bold()),
             Span::styled(" views │ ", Style::new().dim()),
             Span::styled("Tab/←→", Style::new().fg(APP).bold()),
             Span::styled(" switch │ ", Style::new().dim()),
@@ -410,9 +426,7 @@ mod tests {
                     assert!(header.contains("[macOS]"), "{header}");
                     assert!(header.contains("up "), "{header}");
                     assert!(footer.contains("Developed by Ali Tabatabaei"), "{footer}");
-                    for hint in [
-                        "5", "1-4", "views", "Tab", "←→", "switch", "q", "Esc", "quit",
-                    ] {
+                    for hint in ["1-6", "views", "Tab", "←→", "switch", "q", "Esc", "quit"] {
                         assert!(
                             footer.contains(hint),
                             "missing {hint} at width {width}: {footer}"
@@ -454,6 +468,33 @@ mod tests {
         assert!(network.contains("UP"));
         assert!(network.contains('─'));
         assert!(network.contains('█'));
+    }
+
+    #[test]
+    fn ai_view_uses_the_supplied_usage_snapshot_at_the_minimum_terminal_size() {
+        let usage = crate::ai::parse_codex(&serde_json::json!({
+            "rateLimits": {"primary": {"usedPercent": 25, "windowDurationMins": 300, "resetsAt": 4000}}
+        }), None, 1000).unwrap();
+        let ai = crate::ai::AiSnapshot {
+            codex: usage.clone(),
+            claude: usage,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(70, 20)).unwrap();
+        terminal
+            .draw(|frame| draw_with_ai(frame, &example_snapshot(), View::Ai, &ai, 1000))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..20 {
+            for x in 0..70 {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        assert!(text.contains("6 AI"), "{text}");
+        assert_eq!(text.matches("75.0% remaining").count(), 2, "{text}");
+        assert!(text.contains("Developed by Ali Tabatabaei"), "{text}");
+        assert!(text.contains("q/Esc quit"), "{text}");
     }
 
     #[test]

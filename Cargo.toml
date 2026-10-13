@@ -1,6 +1,6 @@
 [package]
 name = "mac-stats"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Ali Tabatabaei"]
 edition = "2024"
 description = "Live CPU, memory, disk, and network stats for macOS"

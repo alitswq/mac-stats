@@ -15,8 +15,8 @@ You are a decision support system. Explain material trade-offs and support recom
 mac-stats is a macOS terminal monitor for CPU, memory, disk, and network statistics. It is a local Rust binary using the 2024 edition, ratatui, crossterm, sysinfo, and libc. Read README.md for user-visible behavior and metric definitions.
 
 - macOS is required. Collectors use Mach, sysctl, and IOKit; src/lib.rs rejects other target operating systems.
-- Statistics refresh about once per second. The five views are Essentials, RAM, CPU, Disk, and Network.
-- History stays in memory for 600 samples. The application does not persist history or configuration.
+- Statistics refresh about once per second. The six views are Essentials, RAM, CPU, Disk, Network, and AI.
+- System history stays in memory for 600 samples. The optional Claude status-line bridge persists a minimal usage snapshot and has an explicit command to install its Claude settings entry.
 
 ## Architecture and Code Map
 
@@ -29,6 +29,7 @@ Keep code maintainable, with clear responsibilities and SOLID principles. Favor 
 - src/model.rs: snapshots, views, history, scaling, and metric calculations.
 - src/format.rs: report output and formatting helpers.
 - src/ui/: view rendering and shared chart/layout helpers.
+- src/ai/: quota parsing and freshness rules, bounded Codex account queries, the local Claude feed and setup, background collection, and shared AI report formatting. Keep credentials and transcripts out of usage snapshots. AI account reads must not block the system sampling or UI thread, start inference, or start new logins.
 
 Keep platform access in collectors, calculations in the model, and presentation in formatting/UI modules. Reuse shared helpers. Keep unsafe and FFI code narrowly scoped and document ownership and safety requirements when changing it.
 

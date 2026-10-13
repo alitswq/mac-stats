@@ -29,3 +29,4 @@ pub use collect::Sampler;
 pub use format::report;
 pub use model::{Snapshot, View};
 pub use ui::draw;
+pub use ui::draw_with_ai;

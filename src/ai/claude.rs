@@ -1,4 +1,4 @@
-use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -83,6 +83,12 @@ pub fn export_claude(input: &[u8], path: &Path, now: u64) -> io::Result<String> 
     Ok(text)
 }
 
+pub fn export_claude_reader(input: impl Read, path: &Path, now: u64) -> io::Result<String> {
+    let mut bytes = Vec::new();
+    input.take(MAX_SNAPSHOT_BYTES + 1).read_to_end(&mut bytes)?;
+    export_claude(&bytes, path, now)
+}
+
 /// Install an explicit, idempotent status-line command while preserving other settings.
 pub fn install_claude_feed(settings: &Path, executable: &Path) -> io::Result<()> {
     if !executable.is_absolute() {
@@ -121,9 +127,14 @@ pub fn install_claude_feed(settings: &Path, executable: &Path) -> io::Result<()>
 
 fn read_json(path: &Path) -> io::Result<Value> {
     let mut bytes = Vec::new();
-    File::open(path)?
-        .take(MAX_SNAPSHOT_BYTES + 1)
-        .read_to_end(&mut bytes)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("AI usage input must be a regular file"));
+    }
+    file.take(MAX_SNAPSHOT_BYTES + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_SNAPSHOT_BYTES {
         return Err(io::Error::other("AI usage file is too large"));
     }
@@ -270,5 +281,40 @@ mod tests {
         assert!(missing.message.unwrap().contains("setup"));
         fs::write(&path, "not JSON").unwrap();
         assert!(read_claude(&path, 1000).message.is_some());
+    }
+
+    #[test]
+    fn named_pipes_are_rejected_without_waiting_for_a_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::thread;
+        use std::time::{Duration, Instant};
+        let directory = TestDirectory::new();
+        let path = directory.0.join("feed.pipe");
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: name is a valid, NUL-terminated path in this test's private directory.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let writer_path = path.clone();
+        let writer = thread::spawn(move || {
+            // Release a blocking old implementation so the regression fails instead of hanging.
+            thread::sleep(Duration::from_millis(300));
+            if let Ok(mut file) = OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(writer_path)
+            {
+                let _ = file.write_all(b"{}");
+            }
+        });
+        let start = Instant::now();
+        let usage = read_claude(&path, 1000);
+        let elapsed = start.elapsed();
+        writer.join().unwrap();
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "feed read blocked for {elapsed:?}"
+        );
+        assert!(usage.observed_at.is_none());
+        assert!(usage.message.is_some());
     }
 }

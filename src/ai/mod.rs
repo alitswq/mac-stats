@@ -2,7 +2,12 @@
 
 mod claude;
 mod codex;
-pub use claude::{claude_usage_path, export_claude, install_claude_feed, read_claude};
+mod display;
+pub use claude::{
+    claude_usage_path, export_claude, export_claude_reader, install_claude_feed, read_claude,
+};
+pub use display::report;
+pub(crate) use display::usage_lines;
 mod parse;
 mod service;
 pub use codex::collect_codex;
@@ -36,8 +41,8 @@ impl QuotaWindow {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TokenUsage {
-    pub input: Option<u64>,
-    pub output: Option<u64>,
+    pub context_input: Option<u64>,
+    pub context_output: Option<u64>,
     pub lifetime: Option<u64>,
     pub estimated_session_cost: Option<f64>,
 }
