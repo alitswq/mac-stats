@@ -1,5 +1,7 @@
 # mac-stats
 
+Developed by **Ali Tabatabaei**.
+
 A macOS terminal monitor for the stats you glance at in the menu bar: CPU, memory, disk, and network. It is one local binary. It does not phone home, write a config file, or keep history after you quit.
 
 The screen refreshes about once a second. Five views share that sample:
@@ -48,6 +50,20 @@ cargo run -- --help
 ```
 
 An unknown argument exits with status 2.
+
+### Version and build number
+
+The dashboard title, help, and one-sample report show the release version and build number, such as `mac-stats v0.1.1 (build 1)`. The dashboard footer and command help also show the developer credit.
+
+Print the release identity without opening the monitor or sampling system counters:
+
+```shell
+cargo run -- --version
+```
+
+`-V` is an alias for `--version`. The version comes from `Cargo.toml`, the separate build counter from `BUILD_NUMBER`, and the developer credit from the package authors. These values are embedded when compiling.
+
+When preparing each release, update the package version in `Cargo.toml` and increment `BUILD_NUMBER` (for example, `0.1.2` and `2` for the next patch release). Build and verify the release, then commit both files and the updated `Cargo.lock`. The counter must be a positive integer and stays the same when rebuilding the same release.
 
 ### Keys
 

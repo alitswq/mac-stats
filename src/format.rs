@@ -1,4 +1,5 @@
 use crate::model::{MemoryStats, Snapshot, VolumeStats};
+use crate::{DEVELOPER, RELEASE};
 
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -101,7 +102,8 @@ pub fn percent_text(value: Option<f64>) -> String {
 
 pub fn report(snapshot: &Snapshot) -> String {
     let mut lines = Vec::new();
-    lines.push("mac-stats".to_string());
+    lines.push(RELEASE.to_string());
+    lines.push(format!("Developed by {DEVELOPER}"));
     lines.push(String::new());
     lines.push(format!(
         "CPU   {}   user {}   system {}   idle {}",
@@ -244,6 +246,8 @@ mod tests {
     #[test]
     fn report_includes_each_section() {
         let text = report(&example_snapshot());
+        assert!(text.starts_with(RELEASE));
+        assert!(text.contains("Developed by Ali Tabatabaei"));
         assert!(text.contains("CPU   18%"));
         assert!(text.contains("e-cores 28%"));
         assert!(text.contains("RAM   94.00 GB used of 128.0 GB"));

@@ -13,6 +13,7 @@ use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table};
 
 use crate::format::{fit, format_bytes, format_cpu_process, format_rate, format_uptime};
 use crate::model::{ProcessRow, Snapshot, View, bar_widths};
+use crate::{BUILD_NUMBER, DEVELOPER, VERSION};
 
 const MINIMUM_WIDTH: u16 = 70;
 const MINIMUM_HEIGHT: u16 = 20;
@@ -66,6 +67,10 @@ fn draw_header(frame: &mut Frame, area: Rect, snapshot: &Snapshot, view: View) {
 
     let left_spans = vec![
         Span::styled(" mac-stats", Style::new().bold().fg(APP)),
+        Span::styled(
+            format!(" v{VERSION} (build {BUILD_NUMBER})"),
+            Style::new().dim(),
+        ),
         Span::raw(" "),
         Span::styled("[macOS]", Style::new().dim()),
     ];
@@ -127,7 +132,27 @@ fn draw_footer(frame: &mut Frame, area: Rect) {
         Span::styled("Esc", Style::new().fg(APP).bold()),
         Span::styled(" quit", Style::new().dim()),
     ];
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    let credit = Line::styled(format!("Developed by {DEVELOPER} "), Style::new().dim());
+    let hints = Line::from(spans);
+    let hints = if hints.width() + credit.width() + 2 > area.width as usize {
+        Line::from(vec![
+            Span::styled(" 5/1-4", Style::new().fg(APP).bold()),
+            Span::styled(" views │ ", Style::new().dim()),
+            Span::styled("Tab/←→", Style::new().fg(APP).bold()),
+            Span::styled(" switch │ ", Style::new().dim()),
+            Span::styled("q/Esc", Style::new().fg(APP).bold()),
+            Span::styled(" quit", Style::new().dim()),
+        ])
+    } else {
+        hints
+    };
+    let [controls, developer] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(credit.width() as u16),
+    ])
+    .areas(area);
+    frame.render_widget(Paragraph::new(hints), controls);
+    frame.render_widget(Paragraph::new(credit).right_aligned(), developer);
 }
 
 pub(crate) fn card<F>(frame: &mut Frame, area: Rect, title: &str, draw_inner: F)
@@ -367,6 +392,35 @@ mod tests {
             text.push('\n');
         }
         text
+    }
+
+    #[test]
+    fn release_identity_and_controls_fit_every_view_at_supported_widths() {
+        let title = crate::RELEASE;
+        for view in View::cycle() {
+            for width in [70, 80, 100] {
+                for height in [20, 24, 36] {
+                    let text = view_text(*view, width, height);
+                    let header = text.lines().next().unwrap();
+                    let footer = text.lines().last().unwrap();
+                    assert!(
+                        header.contains(title),
+                        "missing release at {width}x{height}:\n{text}"
+                    );
+                    assert!(header.contains("[macOS]"), "{header}");
+                    assert!(header.contains("up "), "{header}");
+                    assert!(footer.contains("Developed by Ali Tabatabaei"), "{footer}");
+                    for hint in [
+                        "5", "1-4", "views", "Tab", "←→", "switch", "q", "Esc", "quit",
+                    ] {
+                        assert!(
+                            footer.contains(hint),
+                            "missing {hint} at width {width}: {footer}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

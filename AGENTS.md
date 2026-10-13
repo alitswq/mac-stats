@@ -34,6 +34,8 @@ Keep platform access in collectors, calculations in the model, and presentation 
 
 ## Development and Verification
 
+When preparing a release, update the package version in `Cargo.toml`, increment the positive integer in `BUILD_NUMBER`, and include the updated `Cargo.lock` in the verified release tranche. The build counter identifies a release and does not increment on each compilation. Keep version, build number, and developer credit sourced from this metadata rather than duplicating values in presentation code.
+
 Run commands from the repository root on macOS with a current stable Rust toolchain.
 
 ```sh

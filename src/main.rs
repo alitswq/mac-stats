@@ -3,29 +3,37 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
-use mac_stats::{Sampler, View, draw, report};
+use mac_stats::{DEVELOPER, RELEASE, Sampler, View, draw, report};
 
 const HELP: &str = "\
-mac-stats
-
 Live CPU, memory, disk, and network stats.
 
-  mac-stats          open the terminal UI
-  mac-stats --once   print one sample and exit
+  mac-stats            open the terminal UI
+  mac-stats --once     print one sample and exit
+  mac-stats --version  show the release version and build number
+  mac-stats --help     show this help and developer credit
 
 Keys: 5 essentials, 1 RAM, 2 CPU, 3 disk, 4 network.
       Tab or the arrow keys switch views. q quits.
 ";
 
+fn help() -> String {
+    format!("{RELEASE}\nDeveloped by {DEVELOPER}\n\n{HELP}")
+}
+
 fn main() -> io::Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("--help") | Some("-h") => {
-            println!("{HELP}");
+            println!("{}", help());
+            Ok(())
+        }
+        Some("--version") | Some("-V") => {
+            println!("{RELEASE}");
             Ok(())
         }
         Some("--once") => print_once(),
         Some(other) => {
-            eprintln!("unknown argument: {other}\n\n{HELP}");
+            eprintln!("unknown argument: {other}\n\n{}", help());
             std::process::exit(2);
         }
         None => ratatui::run(run),
