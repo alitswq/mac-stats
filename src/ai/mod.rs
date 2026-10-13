@@ -1,7 +1,13 @@
 //! Provider-reported AI allowance and usage, independent of system sampling.
 
+mod claude;
+mod codex;
+pub use claude::{claude_usage_path, export_claude, install_claude_feed, read_claude};
 mod parse;
+mod service;
+pub use codex::collect_codex;
 pub use parse::{claude as parse_claude, codex as parse_codex};
+pub use service::{AiMonitor, collect_once};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
