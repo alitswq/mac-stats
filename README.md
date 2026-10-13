@@ -16,6 +16,30 @@ The screen refreshes about once a second. Five views share that sample:
 
 Essentials uses a two-by-two layout when the content area is at least 88 columns by 16 rows. The title and the footer take three rows, so that is a terminal of about 88 by 19. Otherwise the four cards stack.
 
+## Screenshots
+
+All five views, captured in version `0.1.1` (build `1`).
+
+### Essentials (`5`)
+
+![Essentials view showing CPU, RAM, disk, and network statistics together](assets/screenshots/essentials.png)
+
+### RAM (`1`)
+
+![RAM view showing memory categories, swap, usage history, and top processes](assets/screenshots/ram.png)
+
+### CPU (`2`)
+
+![CPU view showing usage history, per-core activity, and top processes](assets/screenshots/cpu.png)
+
+### Disk (`3`)
+
+![Disk view showing startup and external volumes, capacity bars, and process read and write rates](assets/screenshots/disk.png)
+
+### Network (`4`)
+
+![Network view showing download and upload rates, rolling peaks, and traffic history](assets/screenshots/network.png)
+
 ## Requirements
 
 - macOS. The collectors read Mach, IOKit, and sysctl, and the crate does not build on other systems.
