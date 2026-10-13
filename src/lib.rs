@@ -19,6 +19,7 @@ pub const RELEASE: &str = concat!(
     ")"
 );
 
+pub mod ai;
 mod collect;
 mod format;
 mod model;
