@@ -3,20 +3,154 @@ name: Rust
 on:
   push:
     branches: [ "main" ]
+    # Commit the version and BUILD_NUMBER increment before pushing a release tag.
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
+  MACOSX_DEPLOYMENT_TARGET: "15.0"
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:
-
-    runs-on: macos-latest
+    name: Build and test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            arch: x86_64
+            target: x86_64-apple-darwin
 
     steps:
-    - uses: actions/checkout@v7
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Validate release metadata
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import tomllib
+
+          package = tomllib.loads(pathlib.Path("Cargo.toml").read_text())["package"]
+          version = package["version"]
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag) or tag != f"v{version}":
+              raise SystemExit("Release tag must be vMAJOR.MINOR.PATCH and match Cargo.toml")
+          raw_build = pathlib.Path("BUILD_NUMBER").read_text().strip()
+          if not re.fullmatch(r"[1-9][0-9]*", raw_build):
+              raise SystemExit("BUILD_NUMBER must be a positive integer")
+          build = int(raw_build)
+          lock = tomllib.loads(pathlib.Path("Cargo.lock").read_text())
+          if not any(p["name"] == package["name"] and p["version"] == version
+                     for p in lock["package"]):
+              raise SystemExit("Cargo.lock must contain the release package version")
+          tags = subprocess.check_output(["git", "tag", "--list", "v*"], text=True).splitlines()
+          for previous in tags:
+              if previous == tag or not re.fullmatch(r"v\d+\.\d+\.\d+", previous):
+                  continue
+              old_build = int(subprocess.check_output(
+                  ["git", "show", f"{previous}:BUILD_NUMBER"], text=True).strip())
+              if build <= old_build:
+                  raise SystemExit(f"BUILD_NUMBER must exceed {previous} (build {old_build})")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"RELEASE_VERSION={version}\nRELEASE_BUILD={build}\n")
+          print(f"Validated {tag}, build {build}")
+          PY
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Run tests
+        run: cargo test --locked --target "$RUST_TARGET"
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --target "$RUST_TARGET" -- -D warnings
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --locked --release --target "$RUST_TARGET"
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+      - name: Package release download
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          binary="target/$RUST_TARGET/release/mac-stats"
+          expected="mac-stats v$RELEASE_VERSION (build $RELEASE_BUILD)"
+          test "$("$binary" --version)" = "$expected"
+          mkdir -p dist package
+          cp "$binary" package/mac-stats
+          cp README.md package/README.md
+          printf '%s\n' "$expected" 'Requires macOS 15 or later.' > package/RELEASE.txt
+          archive="mac-stats-v$RELEASE_VERSION-build-$RELEASE_BUILD-macos-$RELEASE_ARCH.tar.gz"
+          tar -czf "dist/$archive" -C package mac-stats README.md RELEASE.txt
+          (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
+      - name: Upload release files
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Publish verified downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          test "$(find . -name '*.tar.gz' | wc -l | tr -d ' ')" = 2
+          shasum -a 256 -c ./*.sha256
+          printf '%s\n' \
+            'Download arm64 for Apple Silicon or x86_64 for Intel Macs.' \
+            'Requires macOS 15 or later. Extract the archive and run ./mac-stats.' \
+            'The archive name and RELEASE.txt include the build number shown in the app.' > release-notes.txt
+          gh release create "$RELEASE_TAG" ./*.tar.gz ./*.sha256 \
+            --verify-tag --draft --title "mac-stats $RELEASE_TAG" \
+            --generate-notes --notes-file release-notes.txt
+          gh release edit "$RELEASE_TAG" --draft=false
